@@ -21,6 +21,7 @@ def rotation_matrix(z, y, x):
     xz_rotation = lambda theta : np.roll(zy_rotation(theta), -1, axis=(0,1))
     return yx_rotation(z) @ xz_rotation(y) @ zy_rotation(x)
 
+
 class Transform:
     """Base class for all transforms.
 
@@ -36,17 +37,21 @@ class Transform:
     They will be saved in self.params.  This is NOT for parameters which need to
     be fit or can be reconstructed perfectly from points_start and points_end.
 
+    Please define the following:
+    - self.transform
+    - self.inverse_transform
+    - self.invert
+    - (Optionally) self.transform_image
+
+    Guarantees access to the following:
+    - self.params
+    - self.origin
+    - self.maxpos
+    - self.input_bounds
+
     """
     DEFAULT_PARAMETERS = {}
-    def transform(self, points):
-        raise NotImplementedError("Please subclass and replace")
-    def inverse_transform(self, points):
-        raise NotImplementedError("Please subclass and replace")
-    def transform_relative(self, points):
-        return self.transform(points) - self.origin
-    def inverse_transform_relative(self, points):
-        return self.inverse_transform(points + self.origin)
-    def __init__(self, points_start=None, points_end=None, input_bounds=None, **kwargs):
+    def __init__(self, input_bounds=None, **kwargs):
         # Initialise parameters to either pass values or defaults
         self.params = {}
         for k in self.DEFAULT_PARAMETERS.keys():
@@ -54,12 +59,6 @@ class Transform:
         # Check for invalid arguments
         for k in kwargs.keys():
             assert k in self.DEFAULT_PARAMETERS.keys(), f"Keyword argument {k} is not valid for the transform {type(self)}"
-        # Save and process the points for the transform
-        points_start = np.asarray(points_start)
-        points_end = np.asarray(points_end)
-        assert points_start.shape == points_end.shape, "Points start and end must be the same size"
-        self.points_start = points_start
-        self.points_end = points_end
         self.input_bounds = input_bounds
         # If this transform needs to be fit, then fit it.
         if hasattr(self, "_fit"):
@@ -71,30 +70,29 @@ class Transform:
         else:
             self.origin = np.asarray([0, 0, 0])
             self.maxpos = None
-    @classmethod
-    def from_transform(cls, transform, *args, **kwargs):
-        """Alternative constructor which steals the points from an existing Transform object"""
-        return cls(points_start=transform.points_start, points_end=transform.points_end, input_bounds=transform.input_bounds, *args, **kwargs)
     def __repr__(self):
         ret = self.__class__.__name__
         ret += "("
-        ret += f"points_start={self.points_start.tolist()}, points_end={self.points_end.tolist()}"
+        parts = []
         if self.input_bounds is not None:
-            ret += f", input_bounds={repr(self.input_bounds)}"
+            parts.append(f"input_bounds={repr(self.input_bounds)}")
         for k,v in self.params.items():
-            ret += ", {k}={v}"
+            parts.append(f"{k}={v}")
+        ret += ", ".join(parts)
         ret += ")"
         return ret
     def __add__(self, other):
-        return _TransformComposed(self, other)
+        return compose_transforms(self, other)
+    def transform(self, points):
+        raise NotImplementedError("Please subclass and replace")
+    def inverse_transform(self, points):
+        raise NotImplementedError("Please subclass and replace")
     def invert(self, input_bounds=None):
-        """Invert the transform.
-
-        Note: This won't actually work for all transforms.  Currently it just
-        swaps the order of the points.  Need to be improved in the future.
-
-        """
-        return self.__class__(points_start=self.points_end, points_end=self.points_start, input_bounds=input_bounds, **self.params)
+        return NotImplementedError("Please subclass and replace")
+    # def transform_relative(self, points):
+    #     return self.transform(points) - self.origin
+    # def inverse_transform_relative(self, points):
+    #     return self.inverse_transform(points + self.origin)
     def transform_image(self, img, relative=False):
         """Generic non-rigid transformation for images.
 
@@ -136,118 +134,137 @@ class Transform:
         res_img = sitk.GetArrayFromImage(res)
         return res_img
 
-# class _TransformComposed(Transform):
-#     def __init__(self, tf1, tf2):
-#         self.tf1 = tf1
-#         self.tf2 = tf2
-#     def _fit(self):
-#         pass
-#     def __repr__(self):
-#         return f"_TransformComposed(tf1={repr(tf1)}, tf2={repr(tf2)})"
-#     def transform(self, points):
-#         return self.tf2.transform(self.tf1.transform(points))
-#     def inverse_transform(self, points):
-#         return self.tf1.inverse_transform(self.tf2.inverse_transform(points))
-#     def invert(self):
-#         return self.__class__(tf2.invert(), tf1.invert())
+class PointTransform(Transform):
+    """Transformation based on starting and ending points
 
-class AffineBase(Transform):
-    """A super-class for affine transforms.
+    Please define:
+    - self.transform
+    - self.inverse_transform
+    - (Optionally) self.invert
 
-    All subclasses implement a transformation which consists of a shift plus a
-    matrix multiplication.
+    Guarantees access to:
+    - self.points_start
+    - self.points_end
+    """
+    def __init__(self, points_start=None, points_end=None, input_bounds=None, **kwargs):
+        # Save and process the points for the transform
+        points_start = np.asarray(points_start)
+        points_end = np.asarray(points_end)
+        assert points_start.shape == points_end.shape, "Points start and end must be the same size"
+        self.points_start = points_start
+        self.points_end = points_end
+        super().__init__(input_bounds=input_bounds, **kwargs)
+    @classmethod
+    def from_transform(cls, transform, *args, **kwargs):
+        """Alternative constructor which steals the points from an existing Transform object"""
+        return cls(points_start=transform.points_start, points_end=transform.points_end, input_bounds=transform.input_bounds, *args, **kwargs)
+    def __repr__(self):
+        ret = self.__class__.__name__
+        ret += "("
+        ret += f"points_start={self.points_start.tolist()}, points_end={self.points_end.tolist()}"
+        if self.input_bounds is not None:
+            ret += f", input_bounds={repr(self.input_bounds)}"
+        for k,v in self.params.items():
+            ret += f", {k}={v}"
+        ret += ")"
+        return ret
+    def invert(self, input_bounds=None):
+        """Invert the transform.
 
-    To subclass: define a function "matrix(self, params)" which generates a
-    transformation matrix.  Params should be a vector of parameters needed by
-    the transformation matrix.  You don't need to add in the translation params
-    because these are applied automatically.  Then, define DEFAULT_PARAMS to be
-    the default arguments fed into `params` of the `matrix` method.  This also
-    is how the class figures out how many parameters to pass to `matrix`.
-    """ 
-    def _fit(self):
-        if self.points_start.shape[0] == 0:
-            self.shift_params = np.zeros(3)
-            self.matrix_params = np.zeros(len(self.DEFAULT_PARAMS))
-            return
-        # Do a special case for 2D transforms where we constrain z shift to be
-        # 0.  We detect 2D from the input points, regardless of whether or not a
-        # 2D transform is selected.  This allows 2D transforms to be performed
-        # on 3D data but with a slightly improved optimization efficiency.
-        if np.all(np.isclose(self.points_start[:,0], 0)) and np.all(np.isclose(self.points_end[:,0], 0)):
-            # First three args are shift, rest of args are for transformation matrix
-            def obj_func(params):
-                return np.sum(np.square(self.points_end - (self.points_start - [0, params[0], params[1]]) @ self.matrix(params[2:])))
-            self.optimize_result = scipy.optimize.minimize(obj_func, [0, 0] + self.DEFAULT_PARAMS)
-            self.shift_params = np.concatenate([[0], self.optimize_result.x[0:2]])
-            self.matrix_params = self.optimize_result.x[2:]
-        else:
-            # First three args are shift, rest of args are for transformation matrix
-            def obj_func(params):
-                return np.sum(np.square(self.points_end - (self.points_start - params[0:3]) @ self.matrix(params[3:])))
-            self.optimize_result = scipy.optimize.minimize(obj_func, [0, 0, 0] + self.DEFAULT_PARAMS)
-            self.shift_params = self.optimize_result.x[0:3]
-            self.matrix_params = self.optimize_result.x[3:]
+        Note: This won't actually work for all transforms.  Currently it just
+        swaps the order of the points.  Need to be improved in the future.
+
+        """
+        return self.__class__(points_start=self.points_end, points_end=self.points_start, input_bounds=input_bounds, **self.params)
+
+class AffineTransform:
+    """AffineTransform should always be inherited with PointTransform
+
+    To subclass, use the _fit function to define the parameters self.shift and
+    self.matrix for the two components of the affine transform.  This defines
+    all other necessary functions for a transform.  If you have multiple
+    inheritance from PointTransform, you can use self.points_start and
+    self.points_end.
+
+    """
     def transform(self, points):
         points = np.asarray(points)
         if points.shape[0] == 0:
             return points
-        return (points - self.shift_params) @ self.matrix(self.matrix_params)
+        return (points - self.shift) @ self.matrix
     def inverse_transform(self, points):
         points = np.asarray(points)
-        return points @ np.linalg.inv(self.matrix(self.matrix_params)) + self.shift_params
+        return points @ np.linalg.inv(self.matrix) + self.shift
     def transform_image(self, image, relative=False):
         """A more efficient implementation for affine transforms"""
         if self.input_bounds is not None and relative is True:
             shape = np.round(np.ceil(self.maxpos - self.origin)).astype(int)
         else:
             shape = image.shape
-        mat = np.linalg.inv(self.matrix(self.matrix_params)).T
-        return scipy.ndimage.affine_transform(image, mat, self.shift_params + self.origin @ np.linalg.inv(mat) * np.linalg.det(mat), output_shape=shape)
+        mat = np.linalg.inv(self.matrix).T
+        #return scipy.ndimage.affine_transform(image, mat, self.shift + self.origin @ self.matrix.T / np.linalg.det(self.matrix), output_shape=shape) # <--TODO Switch to this
+        return scipy.ndimage.affine_transform(image, mat, self.shift + self.origin @ np.linalg.inv(mat) * np.linalg.det(mat), output_shape=shape)
+    def invert(self, input_bounds=None):
+        raise NotImplementedError
 
 
-def compose_affine_transforms(tf1, tf2):
-    if tf1.__class__ != tf2.__class__:
-        raise ValueError("Cannot compose, different types")
-    return tf1.__class__(np.concatenate([tf2.points_start, tf2.inverse_transform(tf1.points_start)]),
-                         np.concatenate([tf1.transform(tf2.points_end), tf1.points_end]))
-    #return tf1.__class__(tf2.points_start,
-    #                     tf1.transform(tf2.points_end))
-
-class TranslateRotate(AffineBase):
-    DEFAULT_PARAMS = [0, 0, 0]
-    def matrix(self, params):
-        return rotation_matrix(*params)
-
-class TranslateRotate2D(AffineBase):
-    DEFAULT_PARAMS = [0]
-    def matrix(self, params):
-        return rotation_matrix(params[0], 0, 0)
-
-class Translate(AffineBase):
-    DEFAULT_PARAMS = []
-    def matrix(self, params):
-        return np.eye(3)
-
-class TranslateRotateRescaleUniform2D(AffineBase):
-    DEFAULT_PARAMS = [0, 1]
+class TranslateRotate(AffineTransform,PointTransform):
     def _fit(self):
-        """Too many parameters for the normal fitting routine"""
-        if self.points_start.shape[0] == 0:
-            self.shift_params = np.zeros(3)
-            self.matrix_params = np.zeros(len(self.DEFAULT_PARAMS))
-            return
-        starting_transform = TranslateRotate2D(self.points_start, self.points_end)
-        starting_params = list(starting_transform.shift_params) + list(starting_transform.matrix_params) + [1]
-        # First three args are shift, rest of args are for transformation matrix
-        def obj_func(params):
-            return np.sum(np.square(self.points_end - (self.points_start - [0, params[0], params[1]]) @ self.matrix(params[2:])))
-        self.optimize_result = scipy.optimize.minimize(obj_func, starting_params)
-        self.shift_params = np.concatenate([[0], self.optimize_result.x[0:2]])
-        self.matrix_params = self.optimize_result.x[2:]
-    def matrix(self, params):
-        return rotation_matrix(params[0], 0, 0) @ np.diag([1, params[1], params[1]])
+        demeaned_start = self.points_start - np.mean(self.points_start, axis=0)
+        demeaned_end = self.points_end - np.mean(self.points_end, axis=0)
+        U,S,V = np.linalg.svd(demeaned_end.T @ demeaned_start)
+        self.matrix = V@U.T
+        self.shift = np.mean(self.points_start@self.matrix - self.points_end, axis=0)
 
-class Identity(Transform):
+class TranslateRotate2D(AffineTransform,PointTransform):
+    def _fit(self):
+        demeaned_start = self.points_start - np.mean(self.points_start, axis=0)
+        demeaned_end = self.points_end - np.mean(self.points_end, axis=0)
+        U,S,V = np.linalg.svd(demeaned_end[:,1:3].T @ demeaned_start[:,1:3])
+        corner_matrix = V@U.T
+        self.matrix = np.vstack([[[1, 0, 0]], np.hstack([[[0],[0]], corner_matrix])])
+        self.shift = np.mean(self.points_start@self.matrix - self.points_end, axis=0)
+
+class Translate(AffineTransform,PointTransform):
+    def _fit(self):
+        self.matrix = np.eye(3)
+        self.shift = np.mean(self.points_start - self.points_end, axis=0)
+
+class TranslateFixed(AffineTransform,Transform):
+    DEFAULT_PARAMETERS = {"z": 0, "y": 0, "x": 0}
+    def _fit(self):
+        self.matrix = np.eye(3)
+        self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
+
+class TranslateRotateFixed(AffineTransform,Transform):
+    DEFAULT_PARAMETERS = {"z": 0, "y": 0, "x": 0, "zrotate": 0, "yrotate": 0, "xrotate": 0}
+    def _fit(self):
+        self.matrix = rotation_matrix(self.params["zrotate"], self.params["yrotate"], self.params["xrotate"])
+        self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
+
+# class TranslateRotateRescaleUniform2D(AffineTransform,PointTransform):
+#     def _fit(self):
+#         """Too many parameters for the normal fitting routine"""
+#         if self.points_start.shape[0] == 0:
+#             self.shift = np.zeros(3)
+#             self.matrix = np.zeros(len(self.DEFAULT_PARAMS))
+#             return
+#         starting_transform = TranslateRotate2D(self.points_start, self.points_end)
+#         starting_params = list(starting_transform.shift) + list(starting_transform.matrix) + [1]
+#         print(starting_transform, starting_params)
+#         # First three args are shift, rest of args are for transformation matrix
+#         def obj_func(params):
+#             return np.sum(np.square(self.points_end - (self.points_start - [0, params[0], params[1]]) @ self._matrix(params[2:])))
+#         self.optimize_result = scipy.optimize.minimize(obj_func, starting_params)
+#         self.shift = np.concatenate([[0], self.optimize_result.x[0:2]])
+#         self.matrix = self._matrix(self.optimize_result.x[2:])
+#     def _matrix(self, params):
+#         return rotation_matrix(params[0], 0, 0) @ np.diag([1, params[1], params[1]])
+
+class Identity(AffineTransform,Transform):
+    def _fit(self):
+        self.matrix = np.eye(3)
+        self.shift = np.zeros(3)
     def transform(self, points):
         return points
     def inverse_transform(self, points):
@@ -297,24 +314,22 @@ class _TranslateRotateComplicated(TranslateRotate):
 
 
 # TODO not so sure about this?
-class Rescale(Transform):
+class Rescale(Transform,AffineTransform):
     DEFAULT_PARAMETERS = {"scale": [1,1,1]}
-    def transform(self, points):
-        return points * np.asarray(self.params['scale'])
-    def inverse_transform(self, points):
-        return points / np.asarray(self.params['scale'])
+    def _fit(self):
+        self.matrix = np.diag(self.params["scale"])
     def invert(self):
         return self.__class__(self, scale=1/self.params['scale'])
-    def transform_image(self, image):
-        mat = np.eye(3)*scale
-        zoomed = scipy.ndimage.zoom(image, self.params['scale'])
-        return zoomed
+    # def transform_image(self, image):
+    #     mat = np.eye(3)*scale
+    #     zoomed = scipy.ndimage.zoom(image, self.params['scale'])
+    #     return zoomed
         
 
 from scipy.interpolate import griddata
 
 # TODO finished but untested
-class Triangulation(Transform):
+class Triangulation(PointTransform):
     def _fit(self):
         # To avoid out of bounds, we add a few pseudo points.  We do this by
         # finding the convex hull, centering it, scaling it, and then shifting
@@ -333,12 +348,61 @@ class Triangulation(Transform):
         self.all_points_start = np.concatenate([self.points_start, self.pseudopoints_start])
         self.all_points_end = np.concatenate([self.points_end, self.pseudopoints_end])
     def transform(self, points):
-       zcoords = griddata(self.all_points_start, self.all_points_end[:,0], points) 
-       ycoords = griddata(self.all_points_start, self.all_points_end[:,1], points) 
-       xcoords = griddata(self.all_points_start, self.all_points_end[:,2], points) 
-       return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
+        zcoords = griddata(self.all_points_start, self.all_points_end[:,0], points) 
+        ycoords = griddata(self.all_points_start, self.all_points_end[:,1], points) 
+        xcoords = griddata(self.all_points_start, self.all_points_end[:,2], points) 
+        return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
     def inverse_transform(self, points):
-       zcoords = griddata(self.all_points_end, self.all_points_start[:,0], points) 
-       ycoords = griddata(self.all_points_end, self.all_points_start[:,1], points) 
-       xcoords = griddata(self.all_points_end, self.all_points_start[:,2], points) 
-       return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
+        zcoords = griddata(self.all_points_end, self.all_points_start[:,0], points) 
+        ycoords = griddata(self.all_points_end, self.all_points_start[:,1], points) 
+        xcoords = griddata(self.all_points_end, self.all_points_start[:,2], points) 
+        return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
+
+class ComposedAffine(AffineTransform,Transform):
+    def __init__(self, a, b):
+        self.a = a
+        self.b = b
+        super().__init__(input_bounds=a.input_bounds)
+    def _fit(self):
+        self.matrix = self.a.matrix @ self.b.matrix
+        self.shift = self.a.shift + self.a.matrix @ self.b.shift
+    def __repr__(self):
+        return repr(self.a) + " + " + repr(self.b)
+
+class Composed(Transform):
+    def __init__(self, a, b):
+        self.a = a
+        self.b = b
+        super().__init__(input_bounds=a.input_bounds)
+    def transform(self, points):
+        return self.b.transform(self.a.transform(points))
+    def inverse_transform(self, points):
+        return self.a.inverse_transform(self.b.inverse_transform(points))
+    def invert(self):
+        raise NotImplementedError
+    def __repr__(self):
+        return repr(a) + " + " + repr(b)
+
+def compose_transforms(a, b):
+    # Special cases for linear and for adding to a class (not yet fitted)
+    if isinstance(a, AffineTransform) and isinstance(b, AffineTransform):
+        return ComposedAffine(a, b)
+    if isinstance(a, Transform) and isinstance(b, Transform):
+        return Composed(a, b)
+    if isinstance(a, Transform) and not isinstance(b, Transform):
+        inherit = PointTransform if issubclass(b, PointTransform) else Transform
+        class ComposedPartial(inherit):
+            DEFAULT_PARAMETERS = b.DEFAULT_PARAMETERS
+            def __init__(self, *args, **kwargs):
+                self.b_type = b
+                self.b = b(*args, **kwargs)
+            def transform(self, points):
+                return self.b.transform(a.transform(points))
+            def inverse_transform(self, points):
+                return a.inverse_transform(self.b.inverse_transform(points))
+            def invert(self):
+                raise NotImplementedError
+            def __repr__(self):
+                return repr(a) + " + " + repr(self.b)
+        return ComposedPartial
+    raise NotImplementedError("Invalid composition")
