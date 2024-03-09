@@ -237,13 +237,13 @@ class Translate(AffineTransform,PointTransform):
         self.shift = np.mean(self.points_start - self.points_end, axis=0)
 
 class TranslateFixed(AffineTransform,Transform):
-    DEFAULT_PARAMETERS = {"z": 0, "y": 0, "x": 0}
+    DEFAULT_PARAMETERS = {"z": 0.0, "y": 0.0, "x": 0.0}
     def _fit(self):
         self.matrix = np.eye(3)
         self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
 
 class TranslateRotateFixed(AffineTransform,Transform):
-    DEFAULT_PARAMETERS = {"z": 0, "y": 0, "x": 0, "zrotate": 0, "yrotate": 0, "xrotate": 0}
+    DEFAULT_PARAMETERS = {"z": 0.0, "y": 0.0, "x": 0.0, "zrotate": 0.0, "yrotate": 0.0, "xrotate": 0.0}
     def _fit(self):
         self.matrix = rotation_matrix(self.params["zrotate"], self.params["yrotate"], self.params["xrotate"])
         self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
@@ -380,19 +380,33 @@ def compose_transforms(a, b):
         return Composed(a, b)
     if isinstance(a, Transform) and not isinstance(b, Transform):
         inherit = PointTransform if issubclass(b, PointTransform) else Transform
-        class ComposedPartial(inherit):
-            DEFAULT_PARAMETERS = b.DEFAULT_PARAMETERS
-            def __init__(self, *args, **kwargs):
-                self.b_type = b
-                self.b = b(*args, **kwargs)
-                super().__init__(input_bounds=a.input_bounds)
-            def transform(self, points):
-                return self.b.transform(a.transform(points))
-            def inverse_transform(self, points):
-                return a.inverse_transform(self.b.inverse_transform(points))
-            def invert(self):
-                raise NotImplementedError
-            def __repr__(self):
-                return repr(a) + " + " + repr(self.b)
-        return ComposedPartial
+        if isinstance(a, AffineTransform) and issubclass(b, AffineTransform):
+            class ComposedPartialAffine(AffineTransform,inherit):
+                DEFAULT_PARAMETERS = b.DEFAULT_PARAMETERS
+                def __init__(self, *args, **kwargs):
+                    self.b_type = b
+                    self.b = b(*args, **kwargs)
+                    super().__init__(input_bounds=a.input_bounds)
+                def _fit(self):
+                    self.matrix = a.matrix @ self.b.matrix
+                    self.shift = a.shift + self.b.shift @ np.linalg.inv(a.matrix)
+                def __repr__(self):
+                    return repr(a) + " + " + repr(self.b)
+            return ComposedPartialAffine
+        else:
+            class ComposedPartial(inherit):
+                DEFAULT_PARAMETERS = b.DEFAULT_PARAMETERS
+                def __init__(self, *args, **kwargs):
+                    self.b_type = b
+                    self.b = b(*args, **kwargs)
+                    super().__init__(input_bounds=a.input_bounds)
+                def transform(self, points):
+                    return self.b.transform(a.transform(points))
+                def inverse_transform(self, points):
+                    return a.inverse_transform(self.b.inverse_transform(points))
+                def invert(self):
+                    raise NotImplementedError
+                def __repr__(self):
+                    return repr(a) + " + " + repr(self.b)
+            return ComposedPartial
     raise NotImplementedError("Invalid composition")

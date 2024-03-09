@@ -1,4 +1,4 @@
-from .base import Identity, Translate, Transform, PointTransform
+from .base import Identity, Translate, Transform, PointTransform, AffineTransform
 import numpy as np
 import napari
 import magicgui
@@ -25,7 +25,15 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         if isinstance(transform_type, PointTransform):
             initial_movable_points = transform_type.points_start
             initial_base_points = transform_type.points_end
+        params = transform_type.params.copy()
         transform_type = transform_type.__class__
+    else:
+        params = transform_type.DEFAULT_PARAMETERS.copy()
+    is_point_transform = issubclass(transform_type, PointTransform)
+    if is_point_transform:
+        assert initial_base_points is None
+        assert initial_movable_points is None
+    _prev_matrix = None # A special case optimisation for linear transforms
     v = napari.Viewer()
     # v.window._qt_viewer._dockLayerList.setVisible(False)
     # v.window._qt_viewer._dockLayerControls.setVisible(False)
@@ -36,12 +44,13 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base") for bi in base_image]
     layers_movable = [v.add_image(tform.transform_image(mi, relative=True), colormap="blue", blending="additive", name="movable", translate=tform.origin) for mi in movable_image]
     layers_reference = [v.add_image(rt.transform_image(ri, relative=True), colormap="green", blending="additive", name=f"reference_{i}", translate=rt.origin) for i,(ri,rt) in references]
-    layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
-    layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, .6, 1, 1])
-    layer_base_points.data = base_points
-    layer_movable_points.data = movable_points
-    layer_base_points.editable = False
-    layer_movable_points.editable = False
+    if is_point_transform:
+        layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
+        layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, .6, 1, 1])
+        layer_base_points.data = base_points
+        layer_movable_points.data = movable_points
+        layer_base_points.editable = False
+        layer_movable_points.editable = False
     def select_base_movable():
         # The logic to get this to work is out of order, so please read code in the
         # order specified in the comments.
@@ -133,21 +142,32 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         for b in buttons:
             b.enabled = False
         v.mouse_drag_callbacks.append(remove_click_callback)
-    def apply_transform(*args, transform_type=None):
-        nonlocal tform, movable_points
+    def apply_transform(*args, transform_type=None, **kwargs):
+        # kwargs here are extra parameters to pass to the transform.
+        nonlocal tform, movable_points, params, _prev_matrix
+        print(params)
         if transform_type is None:
             transform_type = tform_type
-        if movable_points is None or len(movable_points) == 0:
-            transform_type = Identity
+        if is_point_transform:
+            if movable_points is None or len(movable_points) == 0:
+                transform_type = Identity
+            tform = transform_type(points_start=movable_points, points_end=base_points, input_bounds=movable_image[0].shape, **params)
+            layer_movable_points.data = tform.transform(movable_points)
+            layer_movable_points.refresh()
+        else:
+            tform = transform_type(input_bounds=movable_image[0].shape, **params)
         for b in buttons: # Disable buttons while applying transform
             b.enabled = False
-        tform = transform_type(points_start=movable_points, points_end=base_points, input_bounds=movable_image[0].shape)
         for layer_movable,mi in zip(layers_movable,movable_image):
-            layer_movable.data = tform.transform_image(mi, relative=True)
+            # This if statement is a special case optimisation for
+            # AffineTransforms only to avoid rerending the image if only the
+            # origin/translation has changed.
+            if _prev_matrix is None or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
+                layer_movable.data = tform.transform_image(mi, relative=True)
+            if isinstance(tform, AffineTransform):
+                _prev_matrix = tform.matrix
             layer_movable.translate = tform.origin
             layer_movable.refresh()
-        layer_movable_points.data = tform.transform(movable_points)
-        layer_movable_points.refresh()
         for b in buttons: # Turn buttons back on when transform is done
             b.enabled = True
     def set_point_size(zoom=None):
@@ -161,7 +181,6 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         layer_movable_points.selected_data = []
         layer_base_points.refresh()
         layer_movable_points.refresh()
-    v.camera.events.zoom.connect(set_point_size)
     v.layers.selection.clear()
     v.layers.selection.add(layers_base[0])
     button_add_point = magicgui.widgets.PushButton(value=True, text='Add new point')
@@ -172,10 +191,30 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     button_reset.clicked.connect(lambda : apply_transform(transform_type=Identity))
     button_delete = magicgui.widgets.PushButton(value=True, text='Remove point')
     button_delete.clicked.connect(remove_point)
-    buttons = [button_add_point, button_transform, button_reset, button_delete]
-    buttons_widget = magicgui.widgets.Container(widgets=buttons)
-    v.window.add_dock_widget(buttons_widget, area="left", add_vertical_stretch=False)
-    set_point_size()
+    if is_point_transform:
+        buttons = [button_add_point, button_transform, button_reset, button_delete]
+    else:
+        buttons = [button_transform, button_reset]
+    widgets = []
+    widgets.extend(buttons)
+    for p,pv in params.items():
+        # This currently assumes all parameters are floats
+        spinbox = magicgui.widgets.FloatSpinBox(value=pv, label=p+":")
+        def spinbox_callback(*args,p=p,spinbox=spinbox):
+            params[p] = spinbox.value
+            if dynamic_update.value:
+                apply_transform()
+            print(params, "From callback")
+        spinbox.changed.connect(spinbox_callback)
+        widgets.append(spinbox)
+    dynamic_update = magicgui.widgets.CheckBox(value=False, label="Dynamic update")
+    if len(params) > 0:
+        widgets.append(dynamic_update)
+    container_widget = magicgui.widgets.Container(widgets=widgets)
+    v.window.add_dock_widget(container_widget, area="left", add_vertical_stretch=False)
+    if is_point_transform:
+        v.camera.events.zoom.connect(set_point_size)
+        set_point_size()
     apply_transform()
     v.show(block=True)
     return tform
