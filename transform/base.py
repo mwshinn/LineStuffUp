@@ -103,18 +103,21 @@ class Transform:
         This can be overridden by more efficient implementations in subclasses.
 
         """
-        shape = np.round(np.ceil(self.maxpos - self.origin)).astype(int)
+        if relative:
+            shape = np.round(np.ceil(self.maxpos - self.origin)).astype(int)
+        else:
+            shape = np.asarray(img.shape).astype(int)
         # First, we construct a list of coordinates of all the pixels in the
         # image, and transform them to find out which point is mapped to which
         # other point.  Then, we inverse transform them to construct a matrix of
         # mappings.  We turn this matrix of mappings into a matrix of shifts
         # (displacements) by subtracting the initial coordinates.
-        meshgrid = np.array(np.meshgrid(np.arange(0, img.shape[0]), np.arange(0,img.shape[1]), np.arange(0,img.shape[2]), indexing="ij"), dtype="float")
+        meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]), np.arange(0,shape[1]), np.arange(0,shape[2]), indexing="ij"), dtype="float")
         grid = meshgrid.T.reshape(-1,3)
         mapped_grid = self.inverse_transform(grid+self.origin) - grid
         #recovered = grid.reshape(*img.shape[::-1],3).T
         #assert np.all(recovered == meshgrid)
-        displacement = mapped_grid.reshape(*img.shape[::-1],3).T
+        displacement = mapped_grid.reshape(*shape[::-1],3).T
         #displacement = mapped_img
         # Once we have the matrix of shifts/displacements, we convert it to a
         # "Vector image" (some data structure from the imagination of the ITK
@@ -126,6 +129,7 @@ class Transform:
         sitk_image = sitk.GetImageFromArray(img)
         resampler = sitk.ResampleImageFilter()
         resampler.SetReferenceImage(sitk_image)
+        resampler.SetSize(np.asarray(shape[::-1], dtype='int').tolist())
         dis_tx = sitk.DisplacementFieldTransform(sitk.Cast(sitk_displacement.ToVectorImage(),sitk.sitkVectorFloat64))
         #dis_tx = sitk.Euler3DTransform()
         #dis_tx.SetRotation(0,0,np.pi/4)
@@ -199,11 +203,13 @@ class AffineTransform:
         """A more efficient implementation for affine transforms"""
         if self.input_bounds is not None and relative is True:
             shape = np.round(np.ceil(self.maxpos - self.origin)).astype(int)
+            origin = self.origin
         else:
             shape = image.shape
+            origin = np.zeros(3)
         mat = np.linalg.inv(self.matrix).T
         #return scipy.ndimage.affine_transform(image, mat, self.shift + self.origin @ self.matrix.T / np.linalg.det(self.matrix), output_shape=shape) # <--TODO Switch to this
-        return scipy.ndimage.affine_transform(image, mat, self.shift + self.origin @ np.linalg.inv(mat) * np.linalg.det(mat), output_shape=shape)
+        return scipy.ndimage.affine_transform(image, mat, self.shift + origin @ np.linalg.inv(mat) * np.linalg.det(mat), output_shape=shape)
     def invert(self, input_bounds=None):
         raise NotImplementedError
 
@@ -212,18 +218,18 @@ class TranslateRotate(AffineTransform,PointTransform):
     def _fit(self):
         demeaned_start = self.points_start - np.mean(self.points_start, axis=0)
         demeaned_end = self.points_end - np.mean(self.points_end, axis=0)
-        U,S,V = np.linalg.svd(demeaned_end.T @ demeaned_start)
-        self.matrix = V@U.T
-        self.shift = np.mean(self.points_start@self.matrix - self.points_end, axis=0)
+        U,S,V = np.linalg.svd(demeaned_start.T @ demeaned_end)
+        self.matrix = U@V
+        self.shift = np.mean(self.points_start - self.points_end@np.linalg.inv(self.matrix), axis=0)
 
 class TranslateRotate2D(AffineTransform,PointTransform):
     def _fit(self):
         demeaned_start = self.points_start - np.mean(self.points_start, axis=0)
         demeaned_end = self.points_end - np.mean(self.points_end, axis=0)
-        U,S,V = np.linalg.svd(demeaned_end[:,1:3].T @ demeaned_start[:,1:3])
-        corner_matrix = V@U.T
+        U,S,V = np.linalg.svd(demeaned_start[:,1:3].T @ demeaned_end[:,1:3])
+        corner_matrix = U@V
         self.matrix = np.vstack([[[1, 0, 0]], np.hstack([[[0],[0]], corner_matrix])])
-        self.shift = np.mean(self.points_start@self.matrix - self.points_end, axis=0)
+        self.shift = np.mean(self.points_start - self.points_end@np.linalg.inv(self.matrix), axis=0)
 
 class Translate(AffineTransform,PointTransform):
     def _fit(self):
@@ -261,7 +267,7 @@ class TranslateRotateFixed(AffineTransform,Transform):
 #     def _matrix(self, params):
 #         return rotation_matrix(params[0], 0, 0) @ np.diag([1, params[1], params[1]])
 
-class Identity(AffineTransform,Transform):
+class Identity(AffineTransform,PointTransform):
     def _fit(self):
         self.matrix = np.eye(3)
         self.shift = np.zeros(3)
@@ -272,16 +278,6 @@ class Identity(AffineTransform,Transform):
     def transform_image(self, image, relative=False):
         """More efficient implementation of image transformation"""
         return image
-
-class _TranslateComplicated(Translate):
-    """Should be identical to Translate, included for testing only."""
-    def transform_image(self, image):
-        return Transform.transform_image(self, image)
-
-class _TranslateRotateComplicated(TranslateRotate):
-    """Should be identical to TranslateRotate, included for testing only."""
-    def transform_image(self, image):
-        return Transform.transform_image(self, image)
 
 # class TransformSquareWeightedInterpolation(Transform):
 #     def _fit(before, after):
@@ -313,18 +309,11 @@ class _TranslateRotateComplicated(TranslateRotate):
 #             y = self.triangulation_points_after[s]
 
 
-# TODO not so sure about this?
-class Rescale(Transform,AffineTransform):
-    DEFAULT_PARAMETERS = {"scale": [1,1,1]}
+class Rescale(AffineTransform,Transform):
+    DEFAULT_PARAMETERS = {"z": 1.0, "y": 1.0, "x": 1.0}
     def _fit(self):
-        self.matrix = np.diag(self.params["scale"])
-    def invert(self):
-        return self.__class__(self, scale=1/self.params['scale'])
-    # def transform_image(self, image):
-    #     mat = np.eye(3)*scale
-    #     zoomed = scipy.ndimage.zoom(image, self.params['scale'])
-    #     return zoomed
-        
+        self.matrix = np.diag([self.params["z"], self.params["y"], self.params["x"]])
+        self.shift = np.asarray([0, 0, 0])
 
 from scipy.interpolate import griddata
 
@@ -365,7 +354,7 @@ class ComposedAffine(AffineTransform,Transform):
         super().__init__(input_bounds=a.input_bounds)
     def _fit(self):
         self.matrix = self.a.matrix @ self.b.matrix
-        self.shift = self.a.shift + self.a.matrix @ self.b.shift
+        self.shift = self.a.shift + self.b.shift @ np.linalg.inv(self.a.matrix)
     def __repr__(self):
         return repr(self.a) + " + " + repr(self.b)
 
@@ -396,6 +385,7 @@ def compose_transforms(a, b):
             def __init__(self, *args, **kwargs):
                 self.b_type = b
                 self.b = b(*args, **kwargs)
+                super().__init__(input_bounds=a.input_bounds)
             def transform(self, points):
                 return self.b.transform(a.transform(points))
             def inverse_transform(self, points):

@@ -1,4 +1,4 @@
-from .base import Identity, Translate, Transform
+from .base import Identity, Translate, Transform, PointTransform
 import numpy as np
 import napari
 import magicgui
@@ -22,8 +22,9 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         movable_image = tuple([movable_image])
     # Test if we are editing an existing transform
     if isinstance(transform_type, Transform) and initial_base_points is None and initial_movable_points is None:
-        initial_movable_points = transform_type.points_start
-        initial_base_points = transform_type.points_end
+        if isinstance(transform_type, PointTransform):
+            initial_movable_points = transform_type.points_start
+            initial_base_points = transform_type.points_end
         transform_type = transform_type.__class__
     v = napari.Viewer()
     # v.window._qt_viewer._dockLayerList.setVisible(False)
@@ -137,7 +138,7 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         if transform_type is None:
             transform_type = tform_type
         if movable_points is None or len(movable_points) == 0:
-            transform_type = transform.Identity
+            transform_type = Identity
         for b in buttons: # Disable buttons while applying transform
             b.enabled = False
         tform = transform_type(points_start=movable_points, points_end=base_points, input_bounds=movable_image[0].shape)
@@ -168,7 +169,7 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     button_transform = magicgui.widgets.PushButton(value=True, text='Perform transform')
     button_transform.clicked.connect(apply_transform)
     button_reset = magicgui.widgets.PushButton(value=True, text='Reset transform')
-    button_reset.clicked.connect(lambda : apply_transform(transform_type=transform.Identity))
+    button_reset.clicked.connect(lambda : apply_transform(transform_type=Identity))
     button_delete = magicgui.widgets.PushButton(value=True, text='Remove point')
     button_delete.clicked.connect(remove_point)
     buttons = [button_add_point, button_transform, button_reset, button_delete]

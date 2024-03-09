@@ -1,8 +1,8 @@
 
 from transform import *
 
-_FIXED_TRANSFORMS = [TranslateRotateFixed, TranslateRotateFixed, TranslateFixed, Identity]
-_FIXED_TRANSFORMS_PARAMS = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=10, xrotate=20), dict(z=3.2, y=0, x=-24, zrotate=3.4, yrotate=10, xrotate=25), dict(z=-10, y=.3, x=4), dict()]
+_FIXED_TRANSFORMS = [TranslateRotateFixed, TranslateRotateFixed, TranslateFixed, Identity, Rescale]
+_FIXED_TRANSFORMS_PARAMS = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=10, xrotate=20), dict(z=3.2, y=0, x=-24, zrotate=3.4, yrotate=10, xrotate=25), dict(z=-10, y=.3, x=4), dict(), dict(z=2, y=4, x=3)]
 FIXED_TRANSFORMS = [t(**tp) for t,tp in zip(_FIXED_TRANSFORMS, _FIXED_TRANSFORMS_PARAMS)]
 _POINT_TRANSFORMS = [TranslateRotate2D, Translate, TranslateRotate]
 points_pre = np.random.randn(10,3)
@@ -62,5 +62,65 @@ for t in ALL_TRANSFORMS:
     corr = np.corrcoef(image_transformed_twice.flatten(), image_transformed_sum.flatten())[0,1]
     assert corr > .95, f"Correlation for composition of {t} was too low, it was {corr}"
 
+# Test for exact answers for some transforms
+assert np.allclose(TranslateFixed(z=5, y=4, x=7).transform(points_pre), points_pre+[5,4,7])
+assert np.allclose(Identity().transform(points_pre), points_pre)
+assert np.allclose(TranslateRotateFixed(z=3, y=8, x=-3, zrotate=8, yrotate=-9, xrotate=2).transform(points_pre), (points_pre+[3,8,-3])@rotation_matrix(8,-9,2))
+assert np.allclose(Translate(points_pre, points_pre+[5,4,3]).transform(points_pre), points_pre+[5,4,3])
+assert np.allclose(TranslateRotate(points_pre, (points_pre+[-4,2,1])@rotation_matrix(6,1,-3)).transform(points_pre), (points_pre+[-4,2,1])@rotation_matrix(6,1,-3))
+assert np.allclose(TranslateRotate2D(points_pre, (points_pre+[0,2,1])@rotation_matrix(30,0,0)).transform(points_pre), (points_pre+[0,2,1])@rotation_matrix(30,0,0))
+assert np.allclose(Rescale(z=3, y=1, x=.5).transform(points_pre), points_pre*[3,1,.5])
 
-# TODO Test using the origin and relative coords
+# We need to make some new transforms here to make sure the spot always stays
+# within the image in both absolute and relative coordinates.
+spot = np.zeros((80,90,100))
+spotpos = (51,65,53)
+spot[spotpos] = 1
+_FIXED_TRANSFORMS_SPOT = [TranslateRotateFixed, TranslateFixed, Identity]
+_FIXED_TRANSFORMS_PARAMS_SPOT = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=5, xrotate=10), dict(z=-10, y=.3, x=4), dict()]
+FIXED_TRANSFORMS_SPOT = [t(**tp, input_bounds=spot.shape) for t,tp in zip(_FIXED_TRANSFORMS_SPOT, _FIXED_TRANSFORMS_PARAMS_SPOT)]
+_POINT_TRANSFORMS_SPOT = [TranslateRotate2D, Translate, TranslateRotate]
+points_pre = np.random.randn(100,3)+50
+points_post = (points_pre@rotation_matrix(1,2,3))-9
+POINT_TRANSFORMS_SPOT = [t(points_pre, points_post, input_bounds=spot.shape) for t in _POINT_TRANSFORMS_SPOT]
+ALL_TRANSFORMS_SPOT = FIXED_TRANSFORMS_SPOT + POINT_TRANSFORMS_SPOT
+
+# Test image transformations in absolute and relative coordinates
+for t in ALL_TRANSFORMS_SPOT:
+    spot_rel = np.mean(np.where(t.transform_image(spot, relative=True)>.1), axis=1)
+    assert np.max(spot_rel - (t.transform([spotpos]) - t.origin)) < 1
+    spot_abs = np.mean(np.where(t.transform_image(spot, relative=False)>.1), axis=1)
+    assert np.max(spot_abs - t.transform([spotpos])) < 1
+
+# Test compositions in absolute and relative coordinates
+for t1 in ALL_TRANSFORMS_SPOT:
+    for t2 in ALL_TRANSFORMS_SPOT:
+        t = t1 + t2
+        spot_rel = np.mean(np.where(t.transform_image(spot, relative=True)>.1), axis=1)
+        assert np.max(spot_rel - (t.transform([spotpos]) - t.origin)) < 1
+        spot_abs = np.mean(np.where(t.transform_image(spot, relative=False)>.1), axis=1)
+        assert np.max(spot_abs - t.transform([spotpos])) < 1
+
+
+
+# Test nonrigid transformations
+class _TranslateComplicated(Translate):
+    """Should be identical to Translate, included for testing only."""
+    def transform_image(self, *args, **kwargs):
+        return Transform.transform_image(self, *args, **kwargs)
+
+class _TranslateRotateComplicated(TranslateRotate):
+    """Should be identical to TranslateRotate, included for testing only."""
+    def transform_image(self, *args, **kwargs):
+        return Transform.transform_image(self, *args, **kwargs)
+
+for simple, complicated in [(Translate, _TranslateComplicated), (TranslateRotate, _TranslateRotateComplicated)]:
+    im1 = complicated(points_pre, points_post).transform_image(checkerboard, relative=False)
+    im2 = simple(points_pre, points_post).transform_image(checkerboard, relative=False)
+    corr = np.corrcoef(im1.flatten(), im2.flatten())[0,1]
+    assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low, it was {corr}"
+    im1 = complicated(points_pre, points_post, input_bounds=checkerboard.shape).transform_image(checkerboard, relative=True)
+    im2 = simple(points_pre, points_post, input_bounds=checkerboard.shape).transform_image(checkerboard, relative=True)
+    corr = np.corrcoef(im1.flatten(), im2.flatten())[0,1]
+    assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low with input bounds, it was {corr}"
+
