@@ -51,6 +51,7 @@ class Transform:
 
     """
     DEFAULT_PARAMETERS = {}
+    GUI_DRAG_PARAMETERS = [None, None, None]
     def __init__(self, input_bounds=None, **kwargs):
         # Initialise parameters to either pass values or defaults
         self.params = {}
@@ -238,12 +239,14 @@ class Translate(AffineTransform,PointTransform):
 
 class TranslateFixed(AffineTransform,Transform):
     DEFAULT_PARAMETERS = {"z": 0.0, "y": 0.0, "x": 0.0}
+    GUI_DRAG_PARAMETERS = ["z", "y", "x"]
     def _fit(self):
         self.matrix = np.eye(3)
         self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
 
 class TranslateRotateFixed(AffineTransform,Transform):
     DEFAULT_PARAMETERS = {"z": 0.0, "y": 0.0, "x": 0.0, "zrotate": 0.0, "yrotate": 0.0, "xrotate": 0.0}
+    GUI_DRAG_PARAMETERS = ["z", "y", "x"]
     def _fit(self):
         self.matrix = rotation_matrix(self.params["zrotate"], self.params["yrotate"], self.params["xrotate"])
         self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
@@ -383,6 +386,7 @@ def compose_transforms(a, b):
         if isinstance(a, AffineTransform) and issubclass(b, AffineTransform):
             class ComposedPartialAffine(AffineTransform,inherit):
                 DEFAULT_PARAMETERS = b.DEFAULT_PARAMETERS
+                GUI_DRAG_PARAMETERS = b.GUI_DRAG_PARAMETERS
                 def __init__(self, *args, **kwargs):
                     self.b_type = b
                     self.b = b(*args, **kwargs)
@@ -396,6 +400,7 @@ def compose_transforms(a, b):
         else:
             class ComposedPartial(inherit):
                 DEFAULT_PARAMETERS = b.DEFAULT_PARAMETERS
+                GUI_DRAG_PARAMETERS = b.GUI_DRAG_PARAMETERS
                 def __init__(self, *args, **kwargs):
                     self.b_type = b
                     self.b = b(*args, **kwargs)

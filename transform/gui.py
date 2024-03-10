@@ -2,6 +2,7 @@ from .base import Identity, Translate, Transform, PointTransform, AffineTransfor
 import numpy as np
 import napari
 import magicgui
+import vispy
 
 # Deprecated, functionality is in alignment_gui
 def edit_transform(base_image, movable_image, transform):
@@ -145,7 +146,6 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     def apply_transform(*args, transform_type=None, **kwargs):
         # kwargs here are extra parameters to pass to the transform.
         nonlocal tform, movable_points, params, _prev_matrix
-        print(params)
         if transform_type is None:
             transform_type = tform_type
         if is_point_transform:
@@ -197,19 +197,43 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         buttons = [button_transform, button_reset]
     widgets = []
     widgets.extend(buttons)
+    # For controlling parameters using the mouse
+    _MOUSE_DRAG_WIDGETS = [None, None, None] # z, y, and x position widgets
+    def mouse_drag_callback(viewer, event):
+        if vispy.util.keys.CONTROL not in event.modifiers or vispy.util.keys.SHIFT not in event.modifiers:
+            return
+        if viewer.dims.ndisplay != 2:
+            return
+        initial_pos = [w.value if w is not None else 0 for w in _MOUSE_DRAG_WIDGETS]
+        dd = event.dims_displayed
+        base = event.position
+        wh = event.source.size
+        yield
+        while event.type == "mouse_move":
+            if _MOUSE_DRAG_WIDGETS[dd[0]] is not None:
+                _MOUSE_DRAG_WIDGETS[dd[0]].value = event.position[dd[0]] - base[dd[0]] + initial_pos[dd[0]]
+            if _MOUSE_DRAG_WIDGETS[dd[1]] is not None:
+                _MOUSE_DRAG_WIDGETS[dd[1]].value = event.position[dd[1]] - base[dd[1]] + initial_pos[dd[1]]
+            yield
+    # Draw parameter spinboxes
     for p,pv in params.items():
         # This currently assumes all parameters are floats
-        spinbox = magicgui.widgets.FloatSpinBox(value=pv, label=p+":")
+        spinbox = magicgui.widgets.FloatSpinBox(value=pv, label=p+":", min=-np.inf, max=np.inf)
         def spinbox_callback(*args,p=p,spinbox=spinbox):
             params[p] = spinbox.value
             if dynamic_update.value:
                 apply_transform()
-            print(params, "From callback")
         spinbox.changed.connect(spinbox_callback)
         widgets.append(spinbox)
+        if p in transform_type.GUI_DRAG_PARAMETERS:
+            _MOUSE_DRAG_WIDGETS[transform_type.GUI_DRAG_PARAMETERS.index(p)] = spinbox
     dynamic_update = magicgui.widgets.CheckBox(value=False, label="Dynamic update")
     if len(params) > 0:
         widgets.append(dynamic_update)
+    if not all(w is None for w in _MOUSE_DRAG_WIDGETS):
+        v.mouse_drag_callbacks.append(mouse_drag_callback)
+        dynamic_update.value = True
+        widgets.insert(-1, magicgui.widgets.Label(value="Ctrl+Shift mouse drag to edit"))
     container_widget = magicgui.widgets.Container(widgets=widgets)
     v.window.add_dock_widget(container_widget, area="left", add_vertical_stretch=False)
     if is_point_transform:
