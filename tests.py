@@ -78,17 +78,17 @@ spotpos = (51,65,53)
 spot[spotpos] = 1
 _FIXED_TRANSFORMS_SPOT = [TranslateRotateFixed, TranslateFixed, Identity]
 _FIXED_TRANSFORMS_PARAMS_SPOT = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=5, xrotate=10), dict(z=-10, y=.3, x=4), dict()]
-FIXED_TRANSFORMS_SPOT = [t(**tp, input_bounds=spot.shape) for t,tp in zip(_FIXED_TRANSFORMS_SPOT, _FIXED_TRANSFORMS_PARAMS_SPOT)]
+FIXED_TRANSFORMS_SPOT = [t(**tp) for t,tp in zip(_FIXED_TRANSFORMS_SPOT, _FIXED_TRANSFORMS_PARAMS_SPOT)]
 _POINT_TRANSFORMS_SPOT = [TranslateRotate2D, Translate, TranslateRotate]
 points_pre = np.random.randn(100,3)+50
 points_post = (points_pre@rotation_matrix(1,2,3))-9
-POINT_TRANSFORMS_SPOT = [t(points_pre, points_post, input_bounds=spot.shape) for t in _POINT_TRANSFORMS_SPOT]
+POINT_TRANSFORMS_SPOT = [t(points_pre, points_post) for t in _POINT_TRANSFORMS_SPOT]
 ALL_TRANSFORMS_SPOT = FIXED_TRANSFORMS_SPOT + POINT_TRANSFORMS_SPOT
 
 # Test image transformations in absolute and relative coordinates
 for t in ALL_TRANSFORMS_SPOT:
     spot_rel = np.mean(np.where(t.transform_image(spot, relative=True)>.1), axis=1)
-    assert np.max(spot_rel - (t.transform([spotpos]) - t.origin)) < 1
+    assert np.max(spot_rel - (t.transform([spotpos]) - t.origin_and_maxpos(spot.shape)[0])) < 1
     spot_abs = np.mean(np.where(t.transform_image(spot, relative=False)>.1), axis=1)
     assert np.max(spot_abs - t.transform([spotpos])) < 1
 
@@ -97,7 +97,7 @@ for t1 in ALL_TRANSFORMS_SPOT:
     for t2 in ALL_TRANSFORMS_SPOT:
         t = t1 + t2
         spot_rel = np.mean(np.where(t.transform_image(spot, relative=True)>.1), axis=1)
-        assert np.max(spot_rel - (t.transform([spotpos]) - t.origin)) < 1
+        assert np.max(spot_rel - (t.transform([spotpos]) - t.origin_and_maxpos(spot.shape)[0])) < 1
         spot_abs = np.mean(np.where(t.transform_image(spot, relative=False)>.1), axis=1)
         assert np.max(spot_abs - t.transform([spotpos])) < 1
 
@@ -119,8 +119,8 @@ for simple, complicated in [(Translate, _TranslateComplicated), (TranslateRotate
     im2 = simple(points_pre, points_post).transform_image(checkerboard, relative=False)
     corr = np.corrcoef(im1.flatten(), im2.flatten())[0,1]
     assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low, it was {corr}"
-    im1 = complicated(points_pre, points_post, input_bounds=checkerboard.shape).transform_image(checkerboard, relative=True)
-    im2 = simple(points_pre, points_post, input_bounds=checkerboard.shape).transform_image(checkerboard, relative=True)
+    im1 = complicated(points_pre, points_post).transform_image(checkerboard, relative=True)
+    im2 = simple(points_pre, points_post).transform_image(checkerboard, relative=True)
     corr = np.corrcoef(im1.flatten(), im2.flatten())[0,1]
     assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low with input bounds, it was {corr}"
 

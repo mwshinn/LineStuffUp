@@ -21,6 +21,8 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         base_image = tuple([base_image])
     if not isinstance(movable_image, tuple):
         movable_image = tuple([movable_image])
+    pretransform = transform_type.pretransform()
+    tform = pretransform
     # Test if we are editing an existing transform
     if isinstance(transform_type, Transform) and initial_base_points is None and initial_movable_points is None:
         if isinstance(transform_type, PointTransform):
@@ -31,7 +33,7 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     else:
         params = transform_type.DEFAULT_PARAMETERS.copy()
     is_point_transform = issubclass(transform_type, PointTransform)
-    if is_point_transform:
+    if not is_point_transform:
         assert initial_base_points is None
         assert initial_movable_points is None
     _prev_matrix = None # A special case optimisation for linear transforms
@@ -40,11 +42,10 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     # v.window._qt_viewer._dockLayerControls.setVisible(False)
     base_points = [] if initial_base_points is None else list(initial_base_points)
     movable_points = [] if initial_movable_points is None else list(initial_movable_points)
-    tform = Identity()
     tform_type = transform_type
     layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base") for bi in base_image]
-    layers_movable = [v.add_image(tform.transform_image(mi, relative=True), colormap="blue", blending="additive", name="movable", translate=tform.origin) for mi in movable_image]
-    layers_reference = [v.add_image(rt.transform_image(ri, relative=True), colormap="green", blending="additive", name=f"reference_{i}", translate=rt.origin) for i,(ri,rt) in references]
+    layers_movable = [v.add_image(tform.transform_image(mi, relative=True), colormap="blue", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi.shape)[0]) for mi in movable_image]
+    layers_reference = [v.add_image(rt.transform_image(ri, relative=True), colormap="green", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri.shape)[0]) for i,(ri,rt) in enumerate(references)]
     if is_point_transform:
         layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
         layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, .6, 1, 1])
@@ -60,7 +61,6 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         def base_click_callback(viewer, e):
             if e.type != "mouse_press":
                 return
-            print("Base layer callback")
             # Step 2a: Process base layer click
             temp_points.append(e.position)
             for layer_base in layers_base:
@@ -80,17 +80,16 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
             nonlocal tform
             if e.type != "mouse_press":
                 return
-            print("Movable layer callback")
             # Step 3a: Process movable layer click
             base_points.append(temp_points[0])
-            movable_points.append(tform.inverse_transform([e.position])[0])
+            movable_points.append(pretransform.transform(tform.inverse_transform([e.position]))[0])
             for layer_movable in layers_movable:
                 layer_movable.mouse_drag_callbacks.pop()
             for layer_base in layers_base:
                 layer_base.opacity = 1
             # Step 3b: Clean up after clicks
             layer_base_points.data = base_points
-            layer_movable_points.data = tform.transform(movable_points)
+            layer_movable_points.data = tform.transform(pretransform.inverse_transform(movable_points))
             set_point_size()
             v.layers.selection = prev_selection
             for b in buttons:
@@ -114,12 +113,11 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         def remove_click_callback(viewer, e):
             if e.type != "mouse_press":
                 return
-            print("Base layer callback")
             v.mouse_drag_callbacks.pop()
             # Step 2a: Find and remove the closest point (base or movable) to the click and its corresponding point (movable or base)
             search_point = e.position
             dists_base = np.sum(np.square(np.asarray(base_points) - [search_point]), axis=1)
-            dists_movable = np.sum(np.square(np.asarray(tform.transform(movable_points)) - [search_point]), axis=1)
+            dists_movable = np.sum(np.square(np.asarray(tform.transform(pretransform.inverse_transform(movable_points))) - [search_point]), axis=1)
             ind = np.argmin(dists_base) if np.min(dists_base) < np.min(dists_movable) else np.argmin(dists_movable)
             base_points.pop(ind)
             movable_points.pop(ind)
@@ -127,7 +125,7 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
             for layer_base in layers_base:
                 layer_base_points.data = base_points
             for layer_movable in layers_movable:
-                layer_movable_points.data = tform.transform(movable_points)
+                layer_movable_points.data = tform.transform(pretransform.inverse_transform(movable_points))
             set_point_size()
             for b in buttons:
                 b.enabled = True
@@ -143,19 +141,23 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         for b in buttons:
             b.enabled = False
         v.mouse_drag_callbacks.append(remove_click_callback)
-    def apply_transform(*args, transform_type=None, **kwargs):
+    def apply_transform(*args, transform=None, **kwargs):
         # kwargs here are extra parameters to pass to the transform.
         nonlocal tform, movable_points, params, _prev_matrix
-        if transform_type is None:
-            transform_type = tform_type
-        if is_point_transform:
-            if movable_points is None or len(movable_points) == 0:
-                transform_type = Identity
-            tform = transform_type(points_start=movable_points, points_end=base_points, input_bounds=movable_image[0].shape, **params)
-            layer_movable_points.data = tform.transform(movable_points)
+        if transform is not None:
+            tform = transform
+            if is_point_transform:
+                layer_movable_points.data = tform.transform(pretransform.inverse_transform(movable_points))
+                layer_movable_points.refresh()
+        elif is_point_transform:
+            if movable_points is not None and len(movable_points) > 0:
+                tform = tform_type(points_start=movable_points, points_end=base_points, **params)
+            else:
+                tform = pretransform
+            layer_movable_points.data = tform.transform(pretransform.inverse_transform(movable_points))
             layer_movable_points.refresh()
         else:
-            tform = transform_type(input_bounds=movable_image[0].shape, **params)
+            tform = tform_type(**params)
         for b in buttons: # Disable buttons while applying transform
             b.enabled = False
         for layer_movable,mi in zip(layers_movable,movable_image):
@@ -164,10 +166,10 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
             # origin/translation has changed.
             if _prev_matrix is None or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
                 layer_movable.data = tform.transform_image(mi, relative=True)
-            if isinstance(tform, AffineTransform):
-                _prev_matrix = tform.matrix
-            layer_movable.translate = tform.origin
+            layer_movable.translate = tform.origin_and_maxpos(mi.shape)[0]
             layer_movable.refresh()
+        if isinstance(tform, AffineTransform):
+            _prev_matrix = tform.matrix
         for b in buttons: # Turn buttons back on when transform is done
             b.enabled = True
     def set_point_size(zoom=None):
@@ -188,7 +190,7 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     button_transform = magicgui.widgets.PushButton(value=True, text='Perform transform')
     button_transform.clicked.connect(apply_transform)
     button_reset = magicgui.widgets.PushButton(value=True, text='Reset transform')
-    button_reset.clicked.connect(lambda : apply_transform(transform_type=Identity))
+    button_reset.clicked.connect(lambda : apply_transform(transform=pretransform))
     button_delete = magicgui.widgets.PushButton(value=True, text='Remove point')
     button_delete.clicked.connect(remove_point)
     if is_point_transform:
@@ -241,4 +243,5 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
         set_point_size()
     apply_transform()
     v.show(block=True)
+    print(tform)
     return tform

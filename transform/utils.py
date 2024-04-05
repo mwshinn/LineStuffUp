@@ -38,9 +38,8 @@ def blit(source, target, loc):
     # Perform the blit
     target[tuple(target_slices)] = source[tuple(source_slices)]
 
-# NOT TESTED YET
 def bake_images(im_fixed, im_movable, transform):
-    origin = transform.origin
+    origin = transform.origin_and_maxpos(im_movable.shape)[0]
     ti = transform.transform_image(im_movable, relative=True)
     new_dims_max = np.ceil(np.max([ti.shape + origin, im_fixed.shape], axis=0)).astype(int)
     new_dims_min = np.floor(np.min([origin, [0,0,0]], axis=0)).astype(int)
