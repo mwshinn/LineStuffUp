@@ -1,6 +1,5 @@
 import numpy as np
 import scipy
-import SimpleITK as sitk
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
@@ -23,6 +22,12 @@ class Transform:
 
     To use, instantiate and then call fit().
 
+    Conceptually, there are two types of transforms: those that use points (see
+    PointTransform) and those that don't.  Parameters can either be definitions
+    of the transform (e.g., z-shift) or they can be hyperparameters (e.g., a
+    smoothness regularizser).  They should be floats or integers, and can be set
+    through the GUI.
+
     Required methods to subclass: transform (map points from base space to the
     new space), inverse_transform (the opposite).  If parameters need to be
     calculated from the points, also define _fit (takes points_start and
@@ -42,9 +47,6 @@ class Transform:
 
     Guarantees access to the following:
     - self.params
-    - self.origin
-    - self.maxpos
-    - self.input_bounds
 
     """
     DEFAULT_PARAMETERS = {}
@@ -93,7 +95,7 @@ class Transform:
             origin = np.asarray([0, 0, 0])
             maxpos = None
         return origin,maxpos
-    def transform_image(self, img, relative=False): # TODO Replace with scipy.ndimage.map_coordinates
+    def transform_image(self, img, relative=False):
         """Generic non-rigid transformation for images.
 
         Apply the transformation to image `img`.  `pad` is the number of pixels
@@ -112,33 +114,16 @@ class Transform:
         # First, we construct a list of coordinates of all the pixels in the
         # image, and transform them to find out which point is mapped to which
         # other point.  Then, we inverse transform them to construct a matrix of
-        # mappings.  We turn this matrix of mappings into a matrix of shifts
-        # (displacements) by subtracting the initial coordinates.
+        # mappings.  We turn this matrix of mappings into a matrix of pointers
+        # from the destination image to the source image, and then use the
+        # map_coordinates function to perform this mapping.
         meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]), np.arange(0,shape[1]), np.arange(0,shape[2]), indexing="ij"), dtype="float")
         grid = meshgrid.T.reshape(-1,3)
-        mapped_grid = self.inverse_transform(grid+origin) - grid
-        #recovered = grid.reshape(*img.shape[::-1],3).T
-        #assert np.all(recovered == meshgrid)
+        mapped_grid = self.inverse_transform(grid+origin)
         displacement = mapped_grid.reshape(*shape[::-1],3).T
-        #displacement = mapped_img
-        # Once we have the matrix of shifts/displacements, we convert it to a
-        # "Vector image" (some data structure from the imagination of the ITK
-        # developers) and convert the image we are transforming into ITK format
-        # too.  We then use a bunch of magic I don't understand to apply the
-        # transformation.  Really, I would have used a library other than ITK
-        # but couldn't find any others which performed this transformation.
-        sitk_displacement = sitk.GetImageFromArray(displacement[::-1].transpose(1,2,3,0)) # Haven't confirmed this transpose is right
-        sitk_image = sitk.GetImageFromArray(img)
-        resampler = sitk.ResampleImageFilter()
-        resampler.SetReferenceImage(sitk_image)
-        resampler.SetSize(np.asarray(shape[::-1], dtype='int').tolist())
-        dis_tx = sitk.DisplacementFieldTransform(sitk.Cast(sitk_displacement.ToVectorImage(),sitk.sitkVectorFloat64))
-        #dis_tx = sitk.Euler3DTransform()
-        #dis_tx.SetRotation(0,0,np.pi/4)
-        resampler.SetTransform(dis_tx)
-        res = resampler.Execute(sitk_image)
-        res_img = sitk.GetArrayFromImage(res)
-        return res_img
+        # Prefilter == False speeds it up by about 20%.  Supposedly it makes the
+        # output images blurrier though, having't done a comparison yet.
+        return scipy.ndimage.map_coordinates(img, displacement, prefilter=False)
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
@@ -212,17 +197,6 @@ class AffineTransform:
         if points.shape[0] == 0:
             return points
         return points @ np.linalg.inv(self.matrix) + self.shift
-    def transform_image(self, image, relative=False):
-        """A more efficient implementation for affine transforms"""
-        origin,maxpos = self.origin_and_maxpos(image.shape)
-        if relative is True:
-            shape = np.round(np.ceil(maxpos - origin)).astype(int)
-        else:
-            shape = image.shape
-            origin = np.zeros(3)
-        mat = np.linalg.inv(self.matrix).T
-        #return scipy.ndimage.affine_transform(image, mat, self.shift + origin @ self.matrix.T / np.linalg.det(self.matrix), output_shape=shape) # <--Equivalent
-        return scipy.ndimage.affine_transform(image, mat, self.shift + origin @ np.linalg.inv(mat) * np.linalg.det(mat), output_shape=shape)
     def invert(self):
         raise NotImplementedError
 
@@ -418,7 +392,7 @@ def compose_transforms(a, b):
                         extra_args['points_end'] = points_end
                     self.b_type = b
                     self.b = b(*args, **kwargs, **extra_args)
-                    super().__init__(**extra_args)
+                    super().__init__(*args, **kwargs, **extra_args)
                 def _fit(self):
                     self.matrix = a.matrix @ self.b.matrix
                     self.shift = a.shift + self.b.shift @ np.linalg.inv(a.matrix)
@@ -430,7 +404,7 @@ def compose_transforms(a, b):
             return ComposedPartialAffine
         else:
             class ComposedPartial(inherit):
-                DEFAULT_PARAMETERS =b.DEFAULT_PARAMETERS #  b.params # Changed from b.DEFAULT_PARAMETERS
+                DEFAULT_PARAMETERS = b.params if hasattr(b, "params") else b.DEFAULT_PARAMETERS #  b.params # Changed from b.DEFAULT_PARAMETERS
                 GUI_DRAG_PARAMETERS = b.GUI_DRAG_PARAMETERS
                 def __init__(self, points_start=None, points_end=None, *args, **kwargs):
                     extra_args = {}
