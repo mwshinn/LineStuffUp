@@ -126,7 +126,7 @@ class Transform:
         # map_coordinates function to perform this mapping.
         meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]), np.arange(0,shape[1]), np.arange(0,shape[2]), indexing="ij"), dtype="float")
         grid = meshgrid.T.reshape(-1,3)
-        mapped_grid = self.inverse_transform(grid+origin-origin_adjust)
+        mapped_grid = self.inverse_transform(grid+origin)-origin_adjust
         displacement = mapped_grid.reshape(*shape[::-1],3).T
         # Prefilter == False speeds it up by about 20%.  Supposedly it makes the
         # output images blurrier though, having't done a comparison yet.
