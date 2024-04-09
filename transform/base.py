@@ -1,5 +1,6 @@
 import numpy as np
 import scipy
+from .ndarray_shifted import ndarray_shifted
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
@@ -84,17 +85,21 @@ class Transform:
         return self.invert().transform(points)
     def invert(self):
         raise NotImplementedError("Please subclass and replace")
-    def origin_and_maxpos(self, input_bounds):
+    def origin_and_maxpos(self, img):
         """When using relative mode for image transformation, find the corners of the bounds based on the input image size"""
+        input_bounds = img.shape
+        origin_offset = img.origin if isinstance(img, ndarray_shifted) else [0,0,0]
+        print(origin_offset)
         if input_bounds is not None:
             corners_pretransform = [[a, b, c] for a in [0, input_bounds[0]] for b in [0, input_bounds[1]] for c in [0, input_bounds[2]]]
+            corners_pretransform = corners_pretransform + np.asarray(origin_offset)
             origin = np.min(self.transform(corners_pretransform), axis=0)
             maxpos = np.max(self.transform(corners_pretransform), axis=0)
         else:
             origin = np.asarray([0, 0, 0])
             maxpos = None
         return origin,maxpos
-    def transform_image(self, img, relative=False, labels=False):
+    def transform_image(self, img, relative=True, labels=False):
         """Generic non-rigid transformation for images.
 
         Apply the transformation to image `img`.  `pad` is the number of pixels
@@ -106,12 +111,13 @@ class Transform:
         This can be overridden by more efficient implementations in subclasses.
 
         """
-        origin, maxpos = self.origin_and_maxpos(img.shape)
+        origin, maxpos = self.origin_and_maxpos(img)
         if relative:
             shape = np.round(np.ceil(maxpos - origin)).astype(int)
         else:
             shape = np.asarray(img.shape).astype(int)
             origin = np.zeros(3)
+        origin_adjust = img.origin if isinstance(img, ndarray_shifted) else np.asarray([0,0,0])
         # First, we construct a list of coordinates of all the pixels in the
         # image, and transform them to find out which point is mapped to which
         # other point.  Then, we inverse transform them to construct a matrix of
@@ -120,12 +126,12 @@ class Transform:
         # map_coordinates function to perform this mapping.
         meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]), np.arange(0,shape[1]), np.arange(0,shape[2]), indexing="ij"), dtype="float")
         grid = meshgrid.T.reshape(-1,3)
-        mapped_grid = self.inverse_transform(grid+origin)
+        mapped_grid = self.inverse_transform(grid+origin-origin_adjust)
         displacement = mapped_grid.reshape(*shape[::-1],3).T
         # Prefilter == False speeds it up by about 20%.  Supposedly it makes the
         # output images blurrier though, having't done a comparison yet.
         order = 0 if labels else 3
-        return scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order)
+        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=origin)
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.

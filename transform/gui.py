@@ -3,6 +3,7 @@ import numpy as np
 import napari
 import magicgui
 import vispy
+from .ndarray_shifted import ndarray_shifted
 
 # Deprecated, functionality is in alignment_gui
 def edit_transform(base_image, movable_image, transform):
@@ -18,9 +19,9 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
 
     """
     if not isinstance(base_image, tuple):
-        base_image = tuple([base_image])
+        base_image = (base_image,)
     if not isinstance(movable_image, tuple):
-        movable_image = tuple([movable_image])
+        movable_image = (movable_image,)
     pretransform = transform_type.pretransform()
     tform = pretransform
     # Test if we are editing an existing transform
@@ -43,9 +44,9 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     base_points = [] if initial_base_points is None else list(initial_base_points)
     movable_points = [] if initial_movable_points is None else list(initial_movable_points)
     tform_type = transform_type
-    layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base") for bi in base_image]
-    layers_movable = [v.add_image(tform.transform_image(mi, relative=True), colormap="blue", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi.shape)[0]) for mi in movable_image]
-    layers_reference = [v.add_image(rt.transform_image(ri, relative=True), colormap="green", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri.shape)[0]) for i,(ri,rt) in enumerate(references)]
+    layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])) for bi in base_image]
+    layers_movable = [v.add_image(tform.transform_image(mi, relative=True), colormap="blue", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi)[0]) for mi in movable_image]
+    layers_reference = [v.add_image(rt.transform_image(ri, relative=True), colormap="green", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri)[0]) for i,(ri,rt) in enumerate(references)]
     if is_point_transform:
         layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
         layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, .6, 1, 1])
@@ -166,7 +167,7 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
             # origin/translation has changed.
             if _prev_matrix is None or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
                 layer_movable.data = tform.transform_image(mi, relative=True)
-            layer_movable.translate = tform.origin_and_maxpos(mi.shape)[0]
+            layer_movable.translate = tform.origin_and_maxpos(mi)[0]
             layer_movable.refresh()
         if isinstance(tform, AffineTransform):
             _prev_matrix = tform.matrix
