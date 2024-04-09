@@ -25,28 +25,26 @@ class Transform:
     Conceptually, there are two types of transforms: those that use points (see
     PointTransform) and those that don't.  Parameters can either be definitions
     of the transform (e.g., z-shift) or they can be hyperparameters (e.g., a
-    smoothness regularizser).  They should be floats or integers, and can be set
+    smoothness regularizser).  They should be floats or booleans, and can be set
     through the GUI.
 
-    Required methods to subclass: transform (map points from base space to the
-    new space), inverse_transform (the opposite).  If parameters need to be
+    Required methods to subclass: "transform" (map points from base space to the
+    new space), "inverse_transform" (the opposite).  If parameters need to be
     calculated from the points, also define _fit (takes points_start and
-    points_end and modifies the current object).
+    points_end and modifies the current object).  You should define the invert
+    function if possible - if you do, inverse_transform will be automatically
+    defined for you.
 
     If you want parameters to be accepted by the constructor, use the
     "DEFAULT_PARAMETERS" dict, where the key is the name and the value is the default.
     They will be saved in self.params.  This is NOT for parameters which need to
     be fit or can be reconstructed perfectly from points_start and points_end.
 
-    Please define the following:
-    - self.transform
-    - self.inverse_transform
-    - self.invert
-    - (Optionally) self.transform_image
-    - (Optionally) self.pretransform
+    There are a few final rules that must be followed when implementing new
+    Transforms:
 
-    Guarantees access to the following:
-    - self.params
+    1. If you don't define self.invert, it must return NotImplementedError (the default)
+    2. The transform MUST be able to be reconstructed perfectly from the output of the __repr__ function.
 
     """
     DEFAULT_PARAMETERS = {}
@@ -71,20 +69,21 @@ class Transform:
         ret += ", ".join(parts)
         ret += ")"
         return ret
+    def __eq__(self, other):
+        return repr(self) == repr(other)
     def __add__(self, other):
         return compose_transforms(self, other)
     def transform(self, points):
         """Forward mapping function for the transformation"""
         raise NotImplementedError("Please subclass and replace")
     def inverse_transform(self, points):
-        """Inverse mapping function for the transformation"""
-        raise NotImplementedError("Please subclass and replace")
+        """Inverse mapping function for the transformation.
+
+        Override this function to provide a more efficient implementation.
+        """
+        return self.invert().transform(points)
     def invert(self):
-        return NotImplementedError("Please subclass and replace")
-    # def transform_relative(self, points):
-    #     return self.transform(points) - self.origin
-    # def inverse_transform_relative(self, points):
-    #     return self.inverse_transform(points + self.origin)
+        raise NotImplementedError("Please subclass and replace")
     def origin_and_maxpos(self, input_bounds):
         """When using relative mode for image transformation, find the corners of the bounds based on the input image size"""
         if input_bounds is not None:
@@ -95,12 +94,14 @@ class Transform:
             origin = np.asarray([0, 0, 0])
             maxpos = None
         return origin,maxpos
-    def transform_image(self, img, relative=False):
+    def transform_image(self, img, relative=False, labels=False):
         """Generic non-rigid transformation for images.
 
         Apply the transformation to image `img`.  `pad` is the number of pixels
         of zeros to pad on each side, it can be a scalar or a length-3 vector.
         (This way, transformations will not be clipped at the image boundaries.)
+
+        If `labels` is True, no interpolation is performed.
 
         This can be overridden by more efficient implementations in subclasses.
 
@@ -123,7 +124,8 @@ class Transform:
         displacement = mapped_grid.reshape(*shape[::-1],3).T
         # Prefilter == False speeds it up by about 20%.  Supposedly it makes the
         # output images blurrier though, having't done a comparison yet.
-        return scipy.ndimage.map_coordinates(img, displacement, prefilter=False)
+        order = 0 if labels else 3
+        return scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order)
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
@@ -171,8 +173,8 @@ class PointTransform(Transform):
     def invert(self):
         """Invert the transform.
 
-        Note: This won't actually work for all transforms.  Currently it just
-        swaps the order of the points.  Need to be improved in the future.
+        Note: This will return incorrect results for some non-affine transforms.
+        Currently it just swaps the order of the points.
 
         """
         return self.__class__(points_start=self.points_end, points_end=self.points_start, **self.params)
@@ -197,8 +199,6 @@ class AffineTransform:
         if points.shape[0] == 0:
             return points
         return points @ np.linalg.inv(self.matrix) + self.shift
-    def invert(self):
-        raise NotImplementedError
 
 
 class TranslateRotate(AffineTransform,PointTransform):
@@ -229,13 +229,21 @@ class TranslateFixed(AffineTransform,Transform):
     def _fit(self):
         self.matrix = np.eye(3)
         self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
+    def invert(self):
+        return self.__class__(x=-self.params["x"], y=-self.params["y"], z=-self.params["z"])
 
 class TranslateRotateFixed(AffineTransform,Transform):
-    DEFAULT_PARAMETERS = {"z": 0.0, "y": 0.0, "x": 0.0, "zrotate": 0.0, "yrotate": 0.0, "xrotate": 0.0}
+    DEFAULT_PARAMETERS = {"z": 0.0, "y": 0.0, "x": 0.0, "zrotate": 0.0, "yrotate": 0.0, "xrotate": 0.0, "invert": False}
     GUI_DRAG_PARAMETERS = ["z", "y", "x"]
     def _fit(self):
         self.matrix = rotation_matrix(self.params["zrotate"], self.params["yrotate"], self.params["xrotate"])
+        if self.params['invert']:
+            self.matrix = self.matrix.T
         self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
+    def invert(self):
+        newzyx = self.matrix.T @ [self.params["z"], self.params["y"], self.params["x"]]
+        return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], invert=True)
+        
 
 # class ZSlice(AffineTransform,Transform):
 #     DEFAULT_PARAMETERS = {"zshift": 0, "yshift": 0, "xshift": 0, "yslope": 0, "xslope": 0}
@@ -262,7 +270,7 @@ class TranslateRotateFixed(AffineTransform,Transform):
 #     def _matrix(self, params):
 #         return rotation_matrix(params[0], 0, 0) @ np.diag([1, params[1], params[1]])
 
-class Identity(AffineTransform,PointTransform):
+class Identity(AffineTransform,Transform):
     def _fit(self):
         self.matrix = np.eye(3)
         self.shift = np.zeros(3)
@@ -270,7 +278,9 @@ class Identity(AffineTransform,PointTransform):
         return points
     def inverse_transform(self, points):
         return points
-    def transform_image(self, image, relative=False):
+    def invert(self):
+        return self.__class__()
+    def transform_image(self, image, relative=False, labels=False):
         """More efficient implementation of image transformation"""
         return image
 
@@ -309,6 +319,8 @@ class Rescale(AffineTransform,Transform):
     def _fit(self):
         self.matrix = np.diag([self.params["z"], self.params["y"], self.params["x"]])
         self.shift = np.asarray([0, 0, 0])
+    def invert(self):
+        return self.__class__(z=1/self.params["z"], y=1/self.params["y"], x=1/self.params["x"])
 
 from scipy.interpolate import griddata
 
@@ -341,35 +353,6 @@ class Triangulation(PointTransform):
         xcoords = griddata(self.all_points_end, self.all_points_start[:,2], points) 
         return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
 
-class ComposedAffine(AffineTransform,Transform):
-    def __init__(self, a, b):
-        self.a = a
-        self.b = b
-        super().__init__()
-    def _fit(self):
-        self.matrix = self.a.matrix @ self.b.matrix
-        self.shift = self.a.shift + self.b.shift @ np.linalg.inv(self.a.matrix)
-    def __repr__(self):
-        return repr(self.a) + " + " + repr(self.b)
-    def pretransform(self):
-        return self.a
-
-class Composed(Transform):
-    def __init__(self, a, b):
-        self.a = a
-        self.b = b
-        super().__init__()
-    def transform(self, points):
-        return self.b.transform(self.a.transform(points))
-    def inverse_transform(self, points):
-        return self.a.inverse_transform(self.b.inverse_transform(points))
-    def invert(self):
-        raise NotImplementedError
-    def __repr__(self):
-        return repr(a) + " + " + repr(b)
-    def pretransform(self):
-        return self.a
-
 def compose_transforms(a, b):
     # Special cases for linear and for adding to a class (not yet fitted)
     if isinstance(a, AffineTransform) and isinstance(b, AffineTransform):
@@ -401,6 +384,8 @@ def compose_transforms(a, b):
                 @staticmethod
                 def pretransform(*args, **kwargs):
                     return a
+                def invert(self):
+                    return self.b.invert() + a.invert()
             return ComposedPartialAffine
         else:
             class ComposedPartial(inherit):
@@ -422,8 +407,12 @@ def compose_transforms(a, b):
                     raise NotImplementedError
                 def __repr__(self):
                     return repr(a) + " + " + repr(self.b)
+                def invert(self):
+                    return self.b.invert() + a.invert()
                 @staticmethod
                 def pretransform(*args, **kwargs):
                     return a
             return ComposedPartial
     raise NotImplementedError("Invalid composition")
+
+

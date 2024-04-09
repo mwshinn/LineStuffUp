@@ -1,5 +1,7 @@
-
 from transform import *
+import tempfile
+from pathlib import Path
+import numpy as np
 
 _FIXED_TRANSFORMS = [TranslateRotateFixed, TranslateRotateFixed, TranslateFixed, Identity, Rescale]
 _FIXED_TRANSFORMS_PARAMS = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=10, xrotate=20), dict(z=3.2, y=0, x=-24, zrotate=3.4, yrotate=10, xrotate=25), dict(z=-10, y=.3, x=4), dict(), dict(z=2, y=4, x=3)]
@@ -16,11 +18,21 @@ new_points = np.random.randn(100,3)
 for t in ALL_TRANSFORMS:
     assert np.allclose(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} can not be inverted"
 
+# Invert all transforms
+for t in ALL_TRANSFORMS:
+    assert np.allclose(t.transform(t.invert().transform(new_points)), new_points), f"Error with inverse of transform {t}"
+
 # Test all compositions for inversion identity
 for t1 in ALL_TRANSFORMS:
     for t2 in ALL_TRANSFORMS:
         t = t1 + t2
         assert np.allclose(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} can not be inverted"
+
+# Invert all compositions of transforms
+for t1 in ALL_TRANSFORMS:
+    for t2 in ALL_TRANSFORMS:
+        t = t1 + t2
+        assert np.allclose(t.transform(t.invert().transform(new_points)), new_points), f"Error with inverse of transform {t}"
 
 # Test all compositions for compositionality
 for t1 in ALL_TRANSFORMS:
@@ -124,3 +136,20 @@ for simple, complicated in [(Translate, _TranslateComplicated), (TranslateRotate
     corr = np.corrcoef(im1.flatten(), im2.flatten())[0,1]
     assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low with input bounds, it was {corr}"
 
+# Test graphs
+g = TransformGraph("mygraph")
+g.add_node("a")
+g.add_node("b")
+g.add_node("c", image=np.random.randn(2,3,4))
+g.add_node("d")
+g.add_edge("a", "b", ALL_TRANSFORMS[0])
+g.add_edge("a", "c", ALL_TRANSFORMS[1])
+g.add_edge("c", "d", ALL_TRANSFORMS[2])
+assert np.allclose(g.get_transform("b", "d").transform(g.get_transform("d", "b").transform(new_points)), new_points)
+assert g.get_image("c").shape == (2,3,4)
+assert g == g, "Self-equality failed"
+with tempfile.TemporaryDirectory() as tmpdir:
+    fn = Path(tmpdir).joinpath("file.npz")
+    g.save(fn)
+    g2 = TransformGraph.load(fn)
+    assert g == g2

@@ -219,16 +219,20 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
             yield
     # Draw parameter spinboxes
     for p,pv in params.items():
-        # This currently assumes all parameters are floats
-        spinbox = magicgui.widgets.FloatSpinBox(value=pv, label=p+":", min=-np.inf, max=np.inf)
-        def spinbox_callback(*args,p=p,spinbox=spinbox):
-            params[p] = spinbox.value
+        # This currently assumes all parameters are floats or bools
+        if isinstance(pv, bool): # Bool
+            print("Making bool")
+            w = magicgui.widgets.CheckBox(value=pv, label=p+":")
+        else: # Float
+            w = magicgui.widgets.FloatSpinBox(value=pv, label=p+":", min=-np.inf, max=np.inf)
+        def widget_callback(*args,p=p,w=w):
+            params[p] = w.value
             if dynamic_update.value:
                 apply_transform()
-        spinbox.changed.connect(spinbox_callback)
-        widgets.append(spinbox)
+        w.changed.connect(widget_callback)
+        widgets.append(w)
         if p in transform_type.GUI_DRAG_PARAMETERS:
-            _MOUSE_DRAG_WIDGETS[transform_type.GUI_DRAG_PARAMETERS.index(p)] = spinbox
+            _MOUSE_DRAG_WIDGETS[transform_type.GUI_DRAG_PARAMETERS.index(p)] = w
     dynamic_update = magicgui.widgets.CheckBox(value=False, label="Dynamic update")
     if len(params) > 0:
         widgets.append(dynamic_update)
