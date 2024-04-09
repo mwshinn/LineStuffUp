@@ -1,5 +1,6 @@
 from . import base as transform
 import numpy as np
+from . import ndarray_shifted as ndarray_shifted
 
 class TransformGraph:
     def __init__(self, name):
@@ -37,8 +38,8 @@ class TransformGraph:
         if image is not None:
             self.node_images[name] = image
     def add_edge(self, frm, to, transform):
-        assert frm in self.nodes, "Node '{frm}' doesn't exist"
-        assert to in self.nodes, "Node '{to}' doesn't exist"
+        assert frm in self.nodes, f"Node '{frm}' doesn't exist"
+        assert to in self.nodes, f"Node '{to}' doesn't exist"
         assert to not in self.edges[frm].keys(), "Edge already exists"
         self.edges[frm][to] = transform
         try:
@@ -55,7 +56,7 @@ class TransformGraph:
                 tform = self.edges[cur][c] if tform is None else tform + self.edges[cur][c]
                 cur = c
             return tform
-        candidates = list(map(tuple, self.edges[frm].keys()))
+        candidates = list(map(lambda x : (x,) if isinstance(x, str) else tuple(x), self.edges[frm].keys()))
         while len(candidates) > 0:
             if to in [l[-1] for l in candidates]:
                 chain = next(l for l in candidates if to == l[-1])

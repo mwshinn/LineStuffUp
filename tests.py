@@ -139,13 +139,13 @@ for simple, complicated in [(Translate, _TranslateComplicated), (TranslateRotate
 # Test graphs
 g = TransformGraph("mygraph")
 g.add_node("a")
-g.add_node("b")
+g.add_node("bx")
 g.add_node("c", image=np.random.randn(2,3,4))
 g.add_node("d")
-g.add_edge("a", "b", ALL_TRANSFORMS[0])
+g.add_edge("a", "bx", ALL_TRANSFORMS[0])
 g.add_edge("a", "c", ALL_TRANSFORMS[1])
 g.add_edge("c", "d", ALL_TRANSFORMS[2])
-assert np.allclose(g.get_transform("b", "d").transform(g.get_transform("d", "b").transform(new_points)), new_points)
+assert np.allclose(g.get_transform("bx", "d").transform(g.get_transform("d", "bx").transform(new_points)), new_points)
 assert g.get_image("c").shape == (2,3,4)
 assert g == g, "Self-equality failed"
 with tempfile.TemporaryDirectory() as tmpdir:

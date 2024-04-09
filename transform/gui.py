@@ -221,7 +221,6 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     for p,pv in params.items():
         # This currently assumes all parameters are floats or bools
         if isinstance(pv, bool): # Bool
-            print("Making bool")
             w = magicgui.widgets.CheckBox(value=pv, label=p+":")
         else: # Float
             w = magicgui.widgets.FloatSpinBox(value=pv, label=p+":", min=-np.inf, max=np.inf)
