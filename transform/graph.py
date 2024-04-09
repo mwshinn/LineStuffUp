@@ -67,3 +67,17 @@ class TransformGraph:
         raise RuntimeError(f"Path from '{frm}' to '{to}' not found")
     def get_image(self, node):
         return self.node_images[node]
+    def visualise(self, filename):
+        try:
+            import graphviz
+        except ImportError:
+            raise ImportError("Please install graphviz package to visualise")
+        g = graphviz.Digraph(self.name, filename=filename)
+        for e1 in self.edges.keys():
+            for e2 in self.edges[e1].keys():
+                if e1 in self.edges[e2].keys() and self.edges[e1][e2].__class__.__name__ == self.edges[e2][e1].__class__.__name__:
+                    if e1 > e2:
+                        g.edge(e1, e2, label=self.edges[e1][e2].__class__.__name__, dir="both")
+                else:
+                    g.edge(e1, e2, label=self.edges[e1][e2].__class__.__name__)
+        g.view()
