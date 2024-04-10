@@ -131,7 +131,7 @@ class Transform:
         # Prefilter == False speeds it up by about 20%.  Supposedly it makes the
         # output images blurrier though, having't done a comparison yet.
         order = 0 if labels else 3
-        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=origin)
+        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=(not labels), order=order), origin=origin)
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
@@ -228,6 +228,15 @@ class Translate(AffineTransform,PointTransform):
     def _fit(self):
         self.matrix = np.eye(3)
         self.shift = np.mean(self.points_start - self.points_end, axis=0)
+
+class Flip(AffineTransform,Transform):
+    DEFAULT_PARAMETERS = {"z": False, "y": False, "x": False, "zthickness": 0, "ythickness": 0, "xthickness": 0}
+    def _fit(self):
+        sign = lambda x : -1 if self.params[x] else 1
+        self.matrix = np.asarray([[sign("z"), 0, 0], [0, sign("y"), 0], [0, 0, sign("x")]])
+        self.shift = np.asarray([max(0, self.params[c+"thickness"]-1)*int(self.params[c]) for c in ["z", "y", "x"]])
+    def invert(self):
+        return self
 
 class TranslateFixed(AffineTransform,Transform):
     DEFAULT_PARAMETERS = {"z": 0.0, "y": 0.0, "x": 0.0}
