@@ -3,11 +3,43 @@ import numpy as np
 import napari
 import magicgui
 import vispy
+from . import utils
 from .ndarray_shifted import ndarray_shifted
 
 # Deprecated, functionality is in alignment_gui
 def edit_transform(base_image, movable_image, transform):
     return alignment_gui(base_image, movable_image, transform_type=transform.__class__, initial_movable_points=transform.points_start, initial_base_points=transform.points_end)
+
+def plot_from_graph(g, ims, output_space=None):
+    """Given a graph g, plot each of the images in the list ims, using the first as a coordinate reference (base).
+
+    Each element in ims can either be the name of a node on the graph (in which
+    case the image from that node will be used, or a tuple of two elements where
+    the first element is the image as an ndarray and the second element is the
+    name of the node to start the transform (i.e., the coordinate space of the
+    image).
+
+    The list ims must be at least length 2.
+    """
+    if isinstance(ims[0], tuple):
+        base_image = ims[0]
+        base_space = ims[1]
+    else:
+        base_space = ims[0]
+        base_image = g.get_image(base_space)
+    if output_space is not None:
+        base_image = g.get_transform(base_space, output_space).transform_image(base_image, labels=utils.image_is_label(base_image))
+        base_space = output_space
+    els = []
+    for im in ims[1:]:
+        if isinstance(im, tuple):
+            els.append((im[0], g.get_transform(im[1], base_space)))
+        else:
+            els.append((g.get_image(im), g.get_transform(im, base_space)))
+    references = []
+    if len(els) > 1:
+        references = els[1:]
+    alignment_gui(base_image, els[0][0], els[0][1], references=references)
 
 def alignment_gui(base_image, movable_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, references=[]):
     """Align images
@@ -45,8 +77,8 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     movable_points = [] if initial_movable_points is None else list(initial_movable_points)
     tform_type = transform_type
     layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])) for bi in base_image]
-    layers_movable = [v.add_image(tform.transform_image(mi, relative=True), colormap="blue", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi)[0]) for mi in movable_image]
-    layers_reference = [v.add_image(rt.transform_image(ri, relative=True), colormap="green", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri)[0]) for i,(ri,rt) in enumerate(references)]
+    layers_movable = [v.add_image(tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi)), colormap="blue", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi)[0]) for mi in movable_image]
+    layers_reference = [v.add_image(rt.transform_image(ri, relative=True, labels=utils.image_is_label(ri)), colormap="green", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri)[0]) for i,(ri,rt) in enumerate(references)]
     if is_point_transform:
         layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
         layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, .6, 1, 1])
@@ -166,7 +198,7 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
             # AffineTransforms only to avoid rerending the image if only the
             # origin/translation has changed.
             if _prev_matrix is None or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
-                layer_movable.data = tform.transform_image(mi, relative=True)
+                layer_movable.data = tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi))
             layer_movable.translate = tform.origin_and_maxpos(mi)[0]
             layer_movable.refresh()
         if isinstance(tform, AffineTransform):

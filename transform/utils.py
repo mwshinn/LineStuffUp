@@ -1,5 +1,7 @@
 import imageio
 import numpy as np
+import io
+import scipy.stats
 
 def apply_transform_to_2D_colour_image(image_filename, transform, flip=False):
     im = imageio.imread(image_filename).transpose(2,0,1)
@@ -56,3 +58,121 @@ def load_image(fn, channel=None):
         return np.mean(img[:,:,axes], axis=2)[None]
     else:
         return img[:,:,channel][None]
+
+def image_is_label(img):
+    """Quick, non-robust way to guess whether an image is a label image"""
+    plane = img[img.shape[0]//2] # Pick a plane in the middle
+    # First a quick test to eliminate most cases quickly
+    pmini = plane[0:100,0:100]
+    if len(np.unique(pmini)) > len(pmini.flat)/2:
+        return False
+    # Now a more complete test
+    vals,counts = np.unique(plane, return_counts=True)
+    if len(vals) > plane.shape[0]*plane.shape[1] / 25: # There are too many "labels"
+        return False
+    if not np.all(np.isclose(vals, vals.astype(int))): # Don't fall on integer values
+        return False
+    if len(vals) == 1: # All black
+        return False
+    if 0 not in vals or np.max(counts) != counts[vals==0][0]: # Zero isn't the most common
+        return False
+    return True
+
+def _image_compression_transform(img, transform_id):
+    if transform_id == 0: # None
+        return img
+    if transform_id == 1: # Truncated log + 10
+        return np.log(10+np.maximum(0, img))
+
+def _image_decompression_transform(img, transform_id):
+    if transform_id == 0: # None
+        return img
+    if transform_id == 1: # Truncated log + 10
+        return np.exp(img)-10
+
+def _image_detect_transform(img):
+    if scipy.stats.skew(img.flatten()) > 25: # Disable this for now
+        return 1 # Truncated log + 10
+    return 0 # None
+
+def compress_image(img, level="normal"):
+    assert level in ["low", "normal", "high"], "Invalid level"
+    # Format code 0 == no compression
+    # Format code 1 == vp9 video stack
+    # Format code 2 == jpegs
+    if img.ndim == 2:
+        img = np.asarray([img])
+    transform_id = _image_detect_transform(img)
+    img = _image_compression_transform(img, transform_id)
+    if image_is_label(img):
+        return img, [0]
+    if min(img.shape) > 10: # Compress volumes as a video in vp9 format (format code 1)
+        bitrate = 20000000 if level == "normal" else 40000000 if level == "high" else 10000000
+        maxplanes = np.max(img)
+        minplanes = np.min(img)
+        print(maxplanes, minplanes)
+        imgnorm = ((img-minplanes)/(maxplanes-minplanes)*255).astype("uint8")
+        zdim = np.argmin(imgnorm.shape) # Thin dimension may not be z
+        imgnorm = imgnorm.swapaxes(zdim, 0)
+        # We need to make the image a size multiple of 16
+        pady = 16 - (imgnorm.shape[1] % 16) % 16
+        padx = 16 - (imgnorm.shape[2] % 16) % 16
+        imgnorm = np.pad(imgnorm, ((0,0), (0,pady), (0,padx)))
+        print("Newscale", imgnorm.shape, pady, padx, img.shape, zdim)
+        kind = [1, transform_id, bitrate, maxplanes, minplanes, pady, padx, zdim]
+        pseudofile = io.BytesIO()
+        writer = imageio.get_writer(pseudofile, format="webm", fps=30, bitrate=bitrate, codec="vp9", macro_block_size=16)
+        for p in imgnorm:
+            writer.append_data(p)
+        writer.close()
+        return np.frombuffer(pseudofile.getvalue(), dtype=np.uint8), kind
+    else: # Compress as jpegs (format code 2)
+        quality = 90 if level == "normal" else 95 if level == "high" else 80
+        files = []
+        maxes = []
+        mins = []
+        for i in range(0, img.shape[0]):
+            pseudofile = io.BytesIO()
+            maxval = np.max(img[i])
+            minval = np.min(img[i])
+            maxes.append(maxval)
+            mins.append(minval)
+            im = ((img[i]-minval)/(maxval-minval)*255).astype("uint8")
+            imageio.v3.imwrite(pseudofile, im, format_hint=".jpeg", quality=quality)
+            files.append(np.frombuffer(pseudofile.getvalue(), dtype=np.uint8))
+        lens = list(map(len, files))
+        print(lens, maxes, mins)
+        info = np.concatenate(list(zip(lens, maxes, mins)))
+        kind = [2, transform_id, quality]+info.tolist()
+        return np.concatenate(files), kind
+
+def decompress_image(data, kind):
+    if kind[0] == 0:
+        return data
+    if kind[0] == 1:
+        _,transform_id,bitrate,maxval,minval,pady,padx,zdim = kind
+        print(maxval, minval)
+        padx = int(padx)
+        pady = int(pady)
+        pseudofile = io.BytesIO(data.tobytes())
+        r = imageio.get_reader(pseudofile, format="webm")
+        d = np.asarray([it[:(it.shape[0]-pady),:(it.shape[1]-padx),0] for it in r.iter_data()], dtype="float32")
+        d = d.swapaxes(int(zdim), 0)
+        r.close()
+        return _image_decompression_transform(d/255.0*(maxval-minval)+minval, int(transform_id))
+    if kind[0] == 2:
+        transform_id,quality = kind[1:3]
+        lens = np.asarray(kind[3::3]).astype(int)
+        maxes = kind[4::3]
+        mins = kind[5::3]
+        print(maxes, mins)
+        ibase = 0
+        ims = []
+        for i,l in enumerate(lens):
+            pseudofile = io.BytesIO(data[ibase:(ibase+l)].tobytes())
+            im = np.asarray(imageio.v3.imread(pseudofile, format_hint=".jpeg"))
+            im = _image_decompression_transform(im/255.0*(maxes[i]-mins[i])+mins[i], int(transform_id))
+            ims.append(im)
+            ibase += l
+        return np.asarray(ims, dtype="float32")
+

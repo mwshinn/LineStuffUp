@@ -111,6 +111,8 @@ class Transform:
         This can be overridden by more efficient implementations in subclasses.
 
         """
+        if img.ndim == 2:
+            img = img[None]
         origin, maxpos = self.origin_and_maxpos(img)
         if relative:
             shape = np.round(np.ceil(maxpos - origin)).astype(int)
@@ -124,7 +126,7 @@ class Transform:
         # mappings.  We turn this matrix of mappings into a matrix of pointers
         # from the destination image to the source image, and then use the
         # map_coordinates function to perform this mapping.
-        meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]), np.arange(0,shape[1]), np.arange(0,shape[2]), indexing="ij"), dtype="float")
+        meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]), np.arange(0,shape[1]), np.arange(0,shape[2]), indexing="ij"), dtype="float32")
         grid = meshgrid.T.reshape(-1,3)
         mapped_grid = self.inverse_transform(grid+origin)-origin_adjust
         displacement = mapped_grid.reshape(*shape[::-1],3).T

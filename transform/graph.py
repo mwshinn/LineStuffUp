@@ -1,6 +1,7 @@
 from . import base as transform
 import numpy as np
 from . import ndarray_shifted as ndarray_shifted
+from . import utils
 
 class TransformGraph:
     def __init__(self, name):
@@ -9,18 +10,21 @@ class TransformGraph:
         self.nodes = [] # List of node names
         self.edges = {} # Dictionary of dictonaries, edges[node1][node2] = transform
         self.node_images = {} # If node has an associated image, node name is key and image is value
+        self.compressed_node_images = {} # If a node has an associated image, the compressed version is stored here and loaded dynamically into node_images
     def __eq__(self, other):
         return (self.name == other.name) and \
             self.nodes == other.nodes and \
             self.edges == other.edges and \
-            len(self.node_images) == len(other.node_images) and \
-            all(np.allclose(self.node_images[ni1],other.node_images[ni2]) for ni1,ni2 in zip(self.node_images.keys(), other.node_images.keys()))
+            len(self.compressed_node_images) == len(other.compressed_node_images) and \
+            all(np.allclose(self.compressed_node_images[ni1][0],other.node_images[ni2][0]) for ni1,ni2 in zip(self.node_images.keys(), other.node_images.keys())) and \
+            all(np.allclose(self.node_images[ni1][1],other.node_images[ni2][1]) for ni1,ni2 in zip(self.node_images.keys(), other.node_images.keys()))
     def save(self, filename):
         # Note to future self: If I ende up not using image arrays, I could rewrite this to save in text format.
-        node_images_keys = list(self.node_images.keys())
-        node_images_values = [self.node_images[k] for k in node_images_keys]
-        node_images_arrays = {f"nodeimage_{i}": node_images_values[i] for i in range(0, len(node_images_values))}
-        np.savez_compressed(filename, name=self.name, nodes=self.nodes, nodeimage_keys=node_images_keys, **node_images_arrays, edges=repr(self.edges))
+        node_images_keys = list(sorted(self.compressed_node_images.keys()))
+        node_images_values = [self.compressed_node_images[k] for k in node_images_keys]
+        node_image_arrays_compressed = {f"nodeimage_{i}": node_images_values[i][0] for i in range(0, len(node_images_values))}
+        node_image_arrays_info = {f"nodeimageinfo_{i}": node_images_values[i][1] for i in range(0, len(node_images_values))}
+        np.savez_compressed(filename, name=self.name, nodes=self.nodes, nodeimage_keys=node_images_keys, **node_image_arrays_compressed, **node_image_arrays_info, edges=repr(self.edges))
     @classmethod
     def load(cls, filename):
         f = np.load(filename)
@@ -29,13 +33,25 @@ class TransformGraph:
         g.edges = eval(str(f['edges']), transform.__dict__, transform.__dict__)
         for i,n in enumerate(f['nodeimage_keys']):
             n = str(n)
+            g.compressed_node_images[n] = (f[f'nodeimage_{i}'], f[f'nodeimageinfo_{i}'])
+        return g
+    @classmethod
+    def load_old(cls, filename):
+        f = np.load(filename)
+        g = cls(str(f['name']))
+        g.nodes = list(map(str, f['nodes']))
+        g.edges = eval(str(f['edges']), transform.__dict__, transform.__dict__)
+        for i,n in enumerate(f['nodeimage_keys']):
+            n = str(n)
             g.node_images[n] = f[f'nodeimage_{i}']
         return g
-    def add_node(self, name, image=None):
+    def add_node(self, name, image=None, labels=False, compression="normal"):
         assert name not in self.nodes, f"Node '{name}' already exists"
         self.nodes.append(name)
+        self.node_is_labels.append(labels)
         self.edges[name] = {}
         if image is not None:
+            self.compressed_node_images[name] = util.compress_image(image, level=compression)
             self.node_images[name] = image
     def add_edge(self, frm, to, transform):
         assert frm in self.nodes, f"Node '{frm}' doesn't exist"
@@ -66,6 +82,8 @@ class TransformGraph:
             candidates.extend(to_append)
         raise RuntimeError(f"Path from '{frm}' to '{to}' not found")
     def get_image(self, node):
+        if node not in self.node_images.keys():
+            self.node_images[node] = utils.decompress_image(*self.compressed_node_images[node])
         return self.node_images[node]
     def visualise(self, filename):
         try:
