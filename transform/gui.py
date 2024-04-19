@@ -35,7 +35,10 @@ def plot_from_graph(g, ims, output_space=None):
         if isinstance(im, tuple):
             els.append((im[0], g.get_transform(im[1], base_space)))
         else:
-            els.append((g.get_image(im), g.get_transform(im, base_space)))
+            gi = g.get_image(im)
+            if gi.shape[0] == 1:
+                gi = gi * np.ones((2,1,1)) # TODO Hack for now when we can't see 1-plane images in napari
+            els.append((gi, g.get_transform(im, base_space)))
     references = []
     if len(els) > 1:
         references = els[1:]

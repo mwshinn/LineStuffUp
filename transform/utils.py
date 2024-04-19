@@ -2,6 +2,7 @@ import imageio
 import numpy as np
 import io
 import scipy.stats
+import imageio.plugins.ffmpeg # If this fails, install the imageio-ffmpeg package with pip
 
 def apply_transform_to_2D_colour_image(image_filename, transform, flip=False):
     im = imageio.imread(image_filename).transpose(2,0,1)
@@ -108,8 +109,9 @@ def compress_image(img, level="normal"):
         return img, [0]
     if min(img.shape) > 10: # Compress volumes as a video in vp9 format (format code 1)
         bitrate = 20000000 if level == "normal" else 40000000 if level == "high" else 10000000
-        maxplanes = np.max(img)
+        maxplanes = np.quantile(img, .999)
         minplanes = np.min(img)
+        img = np.minimum(img, maxplanes)
         print(maxplanes, minplanes)
         imgnorm = ((img-minplanes)/(maxplanes-minplanes)*255).astype("uint8")
         zdim = np.argmin(imgnorm.shape) # Thin dimension may not be z
@@ -133,11 +135,11 @@ def compress_image(img, level="normal"):
         mins = []
         for i in range(0, img.shape[0]):
             pseudofile = io.BytesIO()
-            maxval = np.max(img[i])
+            maxval = np.quantile(img[i], .999)
             minval = np.min(img[i])
             maxes.append(maxval)
             mins.append(minval)
-            im = ((img[i]-minval)/(maxval-minval)*255).astype("uint8")
+            im = ((np.minimum(maxval, img[i])-minval)/(maxval-minval)*255).astype("uint8")
             imageio.v3.imwrite(pseudofile, im, format_hint=".jpeg", quality=quality)
             files.append(np.frombuffer(pseudofile.getvalue(), dtype=np.uint8))
         lens = list(map(len, files))

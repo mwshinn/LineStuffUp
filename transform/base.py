@@ -207,6 +207,12 @@ class AffineTransform:
         if points.shape[0] == 0:
             return points
         return points @ np.linalg.inv(self.matrix) + self.shift
+    def transform_image(self, image, relative=False, labels=False):
+        # Optimisation for the case where no image transform needs to be
+        # performed.
+        if np.all(self.matrix == np.eye(3)):
+            return ndarray_shifted(image, origin=self.shift)
+        return super().transform_image(image, relative=relative, labels=labels)
 
 
 class TranslateRotate(AffineTransform,PointTransform):
@@ -260,14 +266,15 @@ class TranslateRotateFixed(AffineTransform,Transform):
     def invert(self):
         newzyx = self.matrix.T @ [self.params["z"], self.params["y"], self.params["x"]]
         return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], invert=True)
-        
 
-# class ZSlice(AffineTransform,Transform):
-#     DEFAULT_PARAMETERS = {"zshift": 0, "yshift": 0, "xshift": 0, "yslope": 0, "xslope": 0}
-#     def _fit(self):
-#         self.shift = [self.params["zshift"], self.params["yshift"], self.params["xshift"]]
-#         self.matrix = np.asarray([[1, -self.params["yslope"], -self.params["xslope"]], [0, 1, 0], [0, 0, 1]])
 
+class ShearFixed(AffineTransform,Transform):
+    DEFAULT_PARAMETERS = {"yzshear": 0, "xzshear": 0, "xyshear": 0}
+    def _fit(self):
+        self.shift = [0, 0, 0]
+        self.matrix = np.asarray([[1, 0, 0], [self.params["yzshear"], 1, 0], [self.params["xzshear"], self.params["xyshear"], 1]])
+
+Shear = ShearFixed
 # class TranslateRotateRescaleUniform2D(AffineTransform,PointTransform):
 #     def _fit(self):
 #         """Too many parameters for the normal fitting routine"""
