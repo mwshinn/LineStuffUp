@@ -51,15 +51,17 @@ class TransformGraph:
     def add_node(self, name, image=None, compression="normal", notes=""):
         # Image can either be a 3-dimensional ndarray or a string of another node
         assert name not in self.nodes, f"Node '{name}' already exists"
-        self.nodes.append(name)
-        self.edges[name] = {}
-        if image is not None:
+        if image is not None: # Do this first because it may fail due to a memory error, and we don't want the node half-added
             if isinstance(image, str):
                 self.compressed_node_images[name] = (image, [])
             else:
+                if image.ndim == 2:
+                    image = image[None]
                 self.compressed_node_images[name] = utils.compress_image(image, level=compression)
                 self.node_images[name] = image
         self.node_notes[name] = notes
+        self.nodes.append(name)
+        self.edges[name] = {}
     def add_edge(self, frm, to, transform):
         assert frm in self.nodes, f"Node '{frm}' doesn't exist"
         assert to in self.nodes, f"Node '{to}' doesn't exist"
@@ -71,6 +73,13 @@ class TransformGraph:
             self.edges[to][frm] = inv
         except NotImplementedError:
             pass
+    def remove_edge(self, frm, to):
+        assert frm in self.nodes, f"Node '{frm}' doesn't exist"
+        assert to in self.nodes, f"Node '{to}' doesn't exist"
+        assert to in self.edges[frm].keys(), "Edge doesn't exist"
+        del self.edges[frm][to]
+        if frm in self.edges[to].keys():
+            del self.edges[to][frm]
     def get_transform(self, frm, to):
         def _get_transform_from_chain(chain):
             cur = frm
@@ -92,7 +101,7 @@ class TransformGraph:
         if node not in self.node_images.keys():
             if len(self.compressed_node_images[node][1]) == 0: # First element is a string of a node
                 imnode = str(self.compressed_node_images[node][0])
-                self.node_images[node] = self.get_transform(imnode, node).transform_image(self.get_image(imnode))
+                self.node_images[node] = self.get_transform(imnode, node).transform_image(self.get_image(imnode), relative=True)
             else:
                 self.node_images[node] = utils.decompress_image(*self.compressed_node_images[node])
         return self.node_images[node]

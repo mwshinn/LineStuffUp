@@ -3,6 +3,7 @@ import numpy as np
 import io
 import scipy.stats
 import imageio.plugins.ffmpeg # If this fails, install the imageio-ffmpeg package with pip
+from .ndarray_shifted import ndarray_shifted
 
 def apply_transform_to_2D_colour_image(image_filename, transform, flip=False):
     im = imageio.imread(image_filename).transpose(2,0,1)
@@ -50,7 +51,7 @@ def bake_images(im_fixed, im_movable, transform):
     print(new_dims_max, new_dims_min, im.shape)
     blit(im_fixed, im, tuple([0,0,0]-new_dims_min))
     blit(im_movable, im, tuple(origin.astype(int)-new_dims_min))
-    return im
+    return ndarray_shifted(im, origin=new_dims_min)
 
 def load_image(fn, channel=None):
     img = imageio.imread(fn)

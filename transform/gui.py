@@ -28,7 +28,7 @@ def plot_from_graph(g, ims, output_space=None):
         base_space = ims[0]
         base_image = g.get_image(base_space)
     if output_space is not None:
-        base_image = g.get_transform(base_space, output_space).transform_image(base_image, labels=utils.image_is_label(base_image))
+        base_image = g.get_transform(base_space, output_space).transform_image(base_image, labels=utils.image_is_label(base_image), relative=True)
         base_space = output_space
     els = []
     for im in ims[1:]:

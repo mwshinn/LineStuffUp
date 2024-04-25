@@ -93,10 +93,10 @@ class Transform:
         if input_bounds is not None:
             corners_pretransform = [[a, b, c] for a in [0, input_bounds[0]] for b in [0, input_bounds[1]] for c in [0, input_bounds[2]]]
             corners_pretransform = corners_pretransform + np.asarray(origin_offset)
-            origin = np.min(self.transform(corners_pretransform), axis=0)
-            maxpos = np.max(self.transform(corners_pretransform), axis=0)
+            origin = np.min(self.transform(corners_pretransform), axis=0).astype("float32")
+            maxpos = np.max(self.transform(corners_pretransform), axis=0).astype("float32")
         else:
-            origin = np.asarray([0, 0, 0])
+            origin = np.asarray([0, 0, 0], dtype="float32")
             maxpos = None
         return origin,maxpos
     def transform_image(self, img, relative=True, labels=False):
@@ -114,21 +114,30 @@ class Transform:
         if img.ndim == 2:
             img = img[None]
         origin, maxpos = self.origin_and_maxpos(img)
-        if relative:
+        if relative is True:
             shape = np.round(np.ceil(maxpos - origin)).astype(int)
+        elif isinstance(relative, tuple):
+            shape = np.asarray([r[1]-r[0] if isinstance(r, tuple) else r for r in relative], dtype="int")
+            origin = np.asarray([r[0] if isinstance(r, tuple) else 0 for r in relative], dtype="float32")
         else:
             shape = np.asarray(img.shape).astype(int)
-            origin = np.zeros(3)
-        origin_adjust = img.origin if isinstance(img, ndarray_shifted) else np.asarray([0,0,0])
+            origin = np.zeros(3, dtype="float32")
+        origin_adjust = img.origin if isinstance(img, ndarray_shifted) else np.asarray([0,0,0], dtype="float32")
         # First, we construct a list of coordinates of all the pixels in the
         # image, and transform them to find out which point is mapped to which
         # other point.  Then, we inverse transform them to construct a matrix of
         # mappings.  We turn this matrix of mappings into a matrix of pointers
         # from the destination image to the source image, and then use the
         # map_coordinates function to perform this mapping.
-        meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]), np.arange(0,shape[1]), np.arange(0,shape[2]), indexing="ij"), dtype="float32")
+        meshgrid = np.array(np.meshgrid(np.arange(0, shape[0], dtype="float32"), np.arange(0,shape[1], dtype="float32"), np.arange(0,shape[2], dtype="float32"), indexing="ij"), dtype="float32")
         grid = meshgrid.T.reshape(-1,3)
-        mapped_grid = self.inverse_transform(grid+origin)-origin_adjust
+        del meshgrid
+        grid += origin
+        print("dtypes", grid.dtype, origin.dtype, origin_adjust.dtype)
+        mapped_grid = self.inverse_transform(grid)
+        del grid
+        mapped_grid -= origin_adjust
+        print("mapped grid dtype", mapped_grid.dtype)
         displacement = mapped_grid.reshape(*shape[::-1],3).T
         # Prefilter == False speeds it up by about 20%.  Supposedly it makes the
         # output images blurrier though, having't done a comparison yet.
@@ -203,14 +212,14 @@ class AffineTransform:
             return points
         return (points - self.shift) @ self.matrix
     def inverse_transform(self, points):
-        points = np.asarray(points)
+        points = np.asarray(points, dtype="float32")
         if points.shape[0] == 0:
             return points
-        return points @ np.linalg.inv(self.matrix) + self.shift
-    def transform_image(self, image, relative=False, labels=False):
+        return points @ np.linalg.inv(self.matrix.astype("float32")) + self.shift.astype("float32")
+    def transform_image(self, image, relative=True, labels=False):
         # Optimisation for the case where no image transform needs to be
         # performed.
-        if np.all(self.matrix == np.eye(3)):
+        if np.all(self.matrix == np.eye(3)) and relative is True:
             return ndarray_shifted(image, origin=self.shift)
         return super().transform_image(image, relative=relative, labels=labels)
 
@@ -304,7 +313,7 @@ class Identity(AffineTransform,Transform):
         return points
     def invert(self):
         return self.__class__()
-    def transform_image(self, image, relative=False, labels=False):
+    def transform_image(self, image, relative=True, labels=False):
         """More efficient implementation of image transformation"""
         return image
 
