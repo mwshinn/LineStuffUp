@@ -276,6 +276,15 @@ class TranslateRotateFixed(AffineTransform,Transform):
         newzyx = self.matrix.T @ [self.params["z"], self.params["y"], self.params["x"]]
         return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], invert=True)
 
+class TranslateRotateRescale2DFixed(AffineTransform,Transform):
+    DEFAULT_PARAMETERS = {"y": 0.0, "x": 0.0, "rotate": 0.0, "scale": 1.0}
+    GUI_DRAG_PARAMETERS = [None, "y", "x"]
+    def _fit(self):
+        self.matrix = rotation_matrix(self.params["rotate"], 0, 0) @ np.asarray([[1, 0, 0], [0, self.params["scale"], 0], [0, 0, self.params["scale"]]])
+        self.shift = np.asarray([0, -self.params["y"], -self.params["x"]])
+    def invert(self):
+        newzyx = self.matrix.T @ [0, self.params["y"], self.params["x"]]
+        return self.__class__(rotate=-self.params["rotate"], y=-newzyx[1], x=-newzyx[2], scale=1/self.params["scale"])
 
 class ShearFixed(AffineTransform,Transform):
     DEFAULT_PARAMETERS = {"yzshear": 0, "xzshear": 0, "xyshear": 0}
@@ -333,7 +342,7 @@ class Identity(AffineTransform,Transform):
 #     def inverse_transform(self, points):
 
 
-# class TransformTriangulation2D(Transform):
+# class TransformTriangulation2D(AffineTransform,PointTransform):
 #     DEFAULT_PARAMETERS = {"fixed_axis": 0}
 #     def _fit(self, before, after):
 #         self.fixed_axis = self.parameters["fixed_axis"]
@@ -357,44 +366,201 @@ class Rescale(AffineTransform,Transform):
 
 from scipy.interpolate import griddata
 
+class _CoDelaunay(scipy.spatial.Delaunay):
+    def __init__(self, points_to_fit, points_to_access, *args, **kwargs):
+        super().__init__(points=points_to_fit, *args, **kwargs)
+        self.points_to_access = points_to_access
+    def __getattribute__(self, name):
+        if name == "points":
+            return self.points_to_access
+        if name == "max_bound":
+            return np.max(self.points_to_access, axis=0)
+        if name == "min_bound":
+            return np.min(self.points_to_access, axis=0)
+        else:
+            return super().__getattribute__(name)
+
+# class Triangulation2D(PointTransform):
+#     DEFAULT_PARAMETERS = {"invert": False}
+#     def _fit(self):
+#         # To avoid out of bounds, we add a few pseudo points.  We do this by
+#         # finding the convex hull, centering it, scaling it, and then shifting
+#         # the scaled points back from the centering.  We assign these points a
+#         # simple linear transformed version of the points they are derived from.
+#         SCALE_FACTOR = 1000
+#         before = self.points_start[:,1:3]
+#         after = self.points_end[:,1:3]
+#         if not self.params["invert"]: # Make sure we get the same triangulation even when we invert
+#             t = scipy.spatial.Delaunay(before) # Triangulation
+#             assert np.all(t.points == before), "Coplannar points"
+#         else:
+#             t = scipy.spatial.Delaunay(after) # Triangulation
+#             assert np.all(t.points == after), "Coplannar points"
+#             t._points = before
+#         hull_points_inds = np.unique(t.convex_hull.flatten())
+#         hull_points_vecs = after[hull_points_inds] - before[hull_points_inds]
+#         hull_mean_shift = np.mean(before[hull_points_inds], axis=0)
+#         self.pseudopoints_start = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+#         self.pseudopoints_end = self.pseudopoints_start + hull_points_vecs
+#         self.all_points_start = np.concatenate([self.points_start[:,1:3], self.pseudopoints_start])
+#         self.all_points_end = np.concatenate([self.points_end[:,1:3], self.pseudopoints_end])
+#     def transform(self, points):
+#         yinterp = scipy.interpolate.LinearNDInterpolator(self.all_points_start, np.asarray(self.all_points_end)[:,0])
+#         xinterp = scipy.interpolate.LinearNDInterpolator(self.all_points_start, np.asarray(self.all_points_end)[:,1])
+#         if self.params["invert"]:
+#             tri = _CoDelaunay(self.all_points_end, self.all_points_start)
+#             assert np.all(tri._points == self.all_points_end), "Coplannar points"
+#             assert np.all(tri.points == self.all_points_start), "Invalid"
+#             yinterp.tri = tri
+#             xinterp.tri = tri
+#         ycoords = yinterp(np.asarray(points)[:,1:3])
+#         xcoords = xinterp(np.asarray(points)[:,1:3])
+#         #ycoords = griddata(self.all_points_start, np.asarray(self.all_points_end)[:,0], np.asarray(points)[:,1:3], method="linear") 
+#         #xcoords = griddata(self.all_points_start, np.asarray(self.all_points_end)[:,1], np.asarray(points)[:,1:3], method="linear") 
+#         return np.concatenate([np.asarray(points)[:,[0]], ycoords[:,None], xcoords[:,None]], axis=1)
+#     def invert(self):
+#         return self.__class__(points_start=self.points_end, points_end=self.points_start, invert=(not self.params['invert']))
+#     # def inverse_transform(self, points):
+#     #     if not self.params["invert"]:
+#     #         tri = scipy.spatial.Delaunay(self.all_points_end)
+#     #         assert np.all(tri.points == self.all_points_end), "Coplannar points"
+#     #         tri._points = self.all_points_start
+#     #         yinterp.tri = tri
+#     #         xinterp.tri = tri
+#     #     ycoords = griddata(self.all_points_end, self.all_points_start[:,0], np.asarray(points)[:,1:3], method="linear") 
+#     #     xcoords = griddata(self.all_points_end, self.all_points_start[:,1], np.asarray(points)[:,1:3], method="linear") 
+#     #     return np.concatenate([np.asarray(points)[:,[0]], ycoords[:,None], xcoords[:,None]], axis=1)
+
+# class Triangulation(PointTransform):
+#     def _fit(self):
+#         # To avoid out of bounds, we add a few pseudo points.  We do this by
+#         # finding the convex hull, centering it, scaling it, and then shifting
+#         # the scaled points back from the centering.  We assign these points a
+#         # simple linear transformed version of the points they are derived from.
+#         SCALE_FACTOR = 1000
+#         before = self.points_start
+#         after = self.points_end
+#         t = scipy.spatial.Delaunay(before) # Triangulation
+#         assert np.all(t.points == before), "Coplannar points"
+#         hull_points_inds = np.unique(t.convex_hull.flatten())
+#         hull_points_vecs = after[hull_points_inds] - before[hull_points_inds]
+#         hull_mean_shift = np.mean(before[hull_points_inds], axis=0)
+#         self.pseudopoints_start = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+#         self.pseudopoints_end = self.pseudopoints_start + hull_points_vecs
+#         self.all_points_start = np.concatenate([self.points_start, self.pseudopoints_start])
+#         self.all_points_end = np.concatenate([self.points_end, self.pseudopoints_end])
+#     def transform(self, points):
+#         zcoords = griddata(self.all_points_start, self.all_points_end[:,0], points) 
+#         ycoords = griddata(self.all_points_start, self.all_points_end[:,1], points) 
+#         xcoords = griddata(self.all_points_start, self.all_points_end[:,2], points) 
+#         return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
+#     def inverse_transform(self, points):
+#         zcoords = griddata(self.all_points_end, self.all_points_start[:,0], points) 
+#         ycoords = griddata(self.all_points_end, self.all_points_start[:,1], points) 
+#         xcoords = griddata(self.all_points_end, self.all_points_start[:,2], points) 
+#         return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
+
 class Triangulation(PointTransform):
+    DEFAULT_PARAMETERS = {"invert": False}
     def _fit(self):
         # To avoid out of bounds, we add a few pseudo points.  We do this by
         # finding the convex hull, centering it, scaling it, and then shifting
         # the scaled points back from the centering.  We assign these points a
         # simple linear transformed version of the points they are derived from.
         SCALE_FACTOR = 1000
-        before = self.points_start
-        after = self.points_end
+        if self.params["invert"]:
+            before = self.points_end
+            after = self.points_start
+        else:
+            before = self.points_start
+            after = self.points_end
         t = scipy.spatial.Delaunay(before) # Triangulation
         assert np.all(t.points == before), "Coplannar points"
         hull_points_inds = np.unique(t.convex_hull.flatten())
         hull_points_vecs = after[hull_points_inds] - before[hull_points_inds]
         hull_mean_shift = np.mean(before[hull_points_inds], axis=0)
-        self.pseudopoints_start = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
-        self.pseudopoints_end = self.pseudopoints_start + hull_points_vecs
+        if self.params["invert"]:
+            self.pseudopoints_end = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+            self.pseudopoints_start = self.pseudopoints_end + hull_points_vecs
+        else:
+            self.pseudopoints_start = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+            self.pseudopoints_end = self.pseudopoints_start + hull_points_vecs
         self.all_points_start = np.concatenate([self.points_start, self.pseudopoints_start])
         self.all_points_end = np.concatenate([self.points_end, self.pseudopoints_end])
     def transform(self, points):
-        zcoords = griddata(self.all_points_start, self.all_points_end[:,0], points) 
-        ycoords = griddata(self.all_points_start, self.all_points_end[:,1], points) 
-        xcoords = griddata(self.all_points_start, self.all_points_end[:,2], points) 
-        return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
-    def inverse_transform(self, points):
-        zcoords = griddata(self.all_points_end, self.all_points_start[:,0], points) 
-        ycoords = griddata(self.all_points_end, self.all_points_start[:,1], points) 
-        xcoords = griddata(self.all_points_end, self.all_points_start[:,2], points) 
-        return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
+        start = self.all_points_start
+        end = self.all_points_end
+        tri_points = self.all_points_start if not self.params["invert"] else self.all_points_end
+        rns = np.random.RandomState(0).randn(*tri_points.shape)*.0001 # Break symmetry
+        delaunay = scipy.spatial.Delaunay(tri_points+rns)
+        assert np.max(delaunay.points-tri_points)<.1, "Wrong order of Delaunay triangulation, are some points coplannar?"
+        newpoints = np.zeros_like(points)*np.nan
+        for simp in delaunay.simplices:
+            insimp = scipy.spatial.Delaunay(start[simp]).find_simplex(points)>=0
+            coefs_rhs = np.concatenate([start[simp], np.ones(len(simp))[:,None]], axis=1)
+            coefs_lhs = end[simp]
+            params = np.linalg.inv(coefs_rhs) @ coefs_lhs
+            newpoints[insimp] = np.concatenate([points[insimp], np.ones(sum(insimp))[:,None]], axis=1) @ params
+        assert not np.any(np.isnan(newpoints)), "Point was outside of simplex or invalid input points"
+        return newpoints
+    def invert(self):
+        return self.__class__(invert=(not self.params["invert"]), points_start=self.points_end, points_end=self.points_start)
+
+class Triangulation2D(PointTransform):
+    DEFAULT_PARAMETERS = {"invert": False}
+    def _fit(self):
+        # To avoid out of bounds, we add a few pseudo points.  We do this by
+        # finding the convex hull, centering it, scaling it, and then shifting
+        # the scaled points back from the centering.  We assign these points a
+        # simple linear transformed version of the points they are derived from.
+        SCALE_FACTOR = 1000
+        if self.params["invert"]:
+            before = self.points_end[:,1:]
+            after = self.points_start[:,1:]
+        else:
+            before = self.points_start[:,1:]
+            after = self.points_end[:,1:]
+        t = scipy.spatial.Delaunay(before) # Triangulation
+        assert np.all(t.points == before), "Coplannar points"
+        hull_points_inds = np.unique(t.convex_hull.flatten())
+        hull_points_vecs = after[hull_points_inds] - before[hull_points_inds]
+        hull_mean_shift = np.mean(before[hull_points_inds], axis=0)
+        if self.params["invert"]:
+            self.pseudopoints_end = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+            self.pseudopoints_start = self.pseudopoints_end + hull_points_vecs
+        else:
+            self.pseudopoints_start = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+            self.pseudopoints_end = self.pseudopoints_start + hull_points_vecs
+        self.all_points_start = np.concatenate([self.points_start[:,1:], self.pseudopoints_start])
+        self.all_points_end = np.concatenate([self.points_end[:,1:], self.pseudopoints_end])
+    def transform(self, points):
+        start = self.all_points_start
+        end = self.all_points_end
+        tri_points = self.all_points_start if not self.params["invert"] else self.all_points_end
+        rns = np.random.RandomState(0).randn(*tri_points.shape)*.0001 # Break symmetry
+        delaunay = scipy.spatial.Delaunay(tri_points+rns)
+        assert np.max(delaunay.points-tri_points)<.1, "Wrong order of Delaunay triangulation, are some points coplannar?"
+        newpoints = np.zeros_like(points[:,1:])*np.nan
+        for simp in delaunay.simplices:
+            insimp = scipy.spatial.Delaunay(start[simp]).find_simplex(points[:,1:])>=0
+            coefs_rhs = np.concatenate([start[simp], np.ones(len(simp))[:,None]], axis=1)
+            coefs_lhs = end[simp]
+            params = np.linalg.inv(coefs_rhs) @ coefs_lhs
+            newpoints[insimp] = np.concatenate([points[insimp,1:], np.ones(sum(insimp))[:,None]], axis=1) @ params
+        assert not np.any(np.isnan(newpoints)), "Point was outside of simplex or invalid input points"
+        return np.concatenate([points[:,[0]], newpoints], axis=1)
+    def invert(self):
+        return self.__class__(invert=(not self.params["invert"]), points_start=self.points_end, points_end=self.points_start)
 
 def compose_transforms(a, b):
     # Special cases for linear and for adding to a class (not yet fitted)
-    if isinstance(a, AffineTransform) and isinstance(b, AffineTransform):
+    if isinstance(a, Transform) and isinstance(b, Transform):
         if isinstance(b, PointTransform):
             return compose_transforms(a, b.__class__)(points_start=b.points_start, points_end=b.points_end, **b.params)
         else:
             return compose_transforms(a, b.__class__)(**b.params)
-    if isinstance(a, Transform) and isinstance(b, Transform):
-        return Composed(a, b)
+    # if isinstance(a, Transform) and isinstance(b, Transform):
+    #     return Composed(a, b)
     if isinstance(a, Transform) and not isinstance(b, Transform):
         inherit = PointTransform if issubclass(b, PointTransform) else Transform
         if isinstance(a, AffineTransform) and issubclass(b, AffineTransform):
