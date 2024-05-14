@@ -2,6 +2,7 @@ import imageio
 import numpy as np
 import io
 import scipy.stats
+import zlib
 import imageio.plugins.ffmpeg # If this fails, install the imageio-ffmpeg package with pip
 from .ndarray_shifted import ndarray_shifted
 
@@ -106,8 +107,16 @@ def compress_image(img, level="normal"):
         img = np.asarray([img])
     transform_id = _image_detect_transform(img)
     img = _image_compression_transform(img, transform_id)
-    if image_is_label(img):
+    if False: # Image code 0 is uncompressed, which we don't use anymore.
         return img, [0]
+    if image_is_label(img): # Lossless compression with gzip (format code 3)
+        if np.max(img) < 2**8 and np.min(img) >= 0:
+            img = img.astype("uint8")
+        elif np.max(img) < 2**16 and np.min(img) >= 0:
+            img = img.astype("uint16")
+        # Gzip is fast but not great, so we compress twice and this works well (but why?)
+        comp = zlib.compress(zlib.compress(img, 9), 9)
+        return comp, [3, str(img.dtype), *img.shape]
     if min(img.shape) > 10: # Compress volumes as a video in vp9 format (format code 1)
         bitrate = 20000000 if level == "normal" else 40000000 if level == "high" else 10000000
         maxplanes = np.quantile(img, .999)
@@ -150,9 +159,9 @@ def compress_image(img, level="normal"):
         return np.concatenate(files), kind
 
 def decompress_image(data, kind):
-    if kind[0] == 0:
+    if int(kind[0]) == 0:
         return data
-    if kind[0] == 1:
+    if int(kind[0]) == 1:
         _,transform_id,bitrate,maxval,minval,pady,padx,zdim = kind
         print(maxval, minval)
         padx = int(padx)
@@ -163,7 +172,7 @@ def decompress_image(data, kind):
         d = d.swapaxes(int(zdim), 0)
         r.close()
         return _image_decompression_transform(d/255.0*(maxval-minval)+minval, int(transform_id))
-    if kind[0] == 2:
+    if int(kind[0]) == 2:
         transform_id,quality = kind[1:3]
         lens = np.asarray(kind[3::3]).astype(int)
         maxes = kind[4::3]
@@ -178,4 +187,8 @@ def decompress_image(data, kind):
             ims.append(im)
             ibase += l
         return np.asarray(ims, dtype="float32")
+    if int(kind[0]) == 3:
+        imgfile = zlib.decompress(zlib.decompress(data))
+        return np.frombuffer(imgfile, dtype=kind[1]).reshape(*kind[2:].astype('int'))
+    raise ValueError(f"Invalid kind {kind}")
 

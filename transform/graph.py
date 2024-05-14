@@ -80,6 +80,10 @@ class TransformGraph:
         del self.edges[frm][to]
         if frm in self.edges[to].keys():
             del self.edges[to][frm]
+    def unload(self):
+        """Clear memory by unloading the node images, keeping only the compressed forms"""
+        for k in self.node_images.keys():
+            del self.node_images[k]
     def get_transform(self, frm, to):
         def _get_transform_from_chain(chain):
             cur = frm
