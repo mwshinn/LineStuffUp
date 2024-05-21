@@ -80,9 +80,33 @@ class TransformGraph:
         del self.edges[frm][to]
         if frm in self.edges[to].keys():
             del self.edges[to][frm]
+    def connected_components(self):
+        """Find connected components in the graph.
+
+        This does not yet support directed graphs, i.e., graphs which contain
+        non-invertable transforms.
+
+        """
+        components = []
+        for n in g.nodes:
+            # Make sure n isn't accounted for already
+            if any([n in c for c in components]):
+                continue
+            # Find all nodes reachable from n and add to current_component.
+            # Only search through those that haven't been searched through yet.
+            current_component = set([n])
+            to_search = [n]
+            while len(to_search) > 0:
+                node = to_search.pop()
+                connected = list(g.edges[node].keys())
+                to_search.extend([c for c in connected if c not in current_component])
+                current_component = current_component.union(set(connected))
+            components.append(current_component)
+        return components
     def unload(self):
         """Clear memory by unloading the node images, keeping only the compressed forms"""
-        for k in self.node_images.keys():
+        keys = list(self.node_images.keys())
+        for k in keys:
             del self.node_images[k]
     def get_transform(self, frm, to):
         def _get_transform_from_chain(chain):

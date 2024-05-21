@@ -69,6 +69,8 @@ def image_is_label(img):
     pmini = plane[0:100,0:100]
     if len(np.unique(pmini)) > len(pmini.flat)/2:
         return False
+    if np.median(np.abs(np.diff(plane, axis=0))) >= 1: # Should be mostly flat
+        return False
     # Now a more complete test
     vals,counts = np.unique(plane, return_counts=True)
     if len(vals) > plane.shape[0]*plane.shape[1] / 25: # There are too many "labels"
@@ -94,7 +96,8 @@ def _image_decompression_transform(img, transform_id):
         return np.exp(img)-10
 
 def _image_detect_transform(img):
-    if scipy.stats.skew(img.flatten()) > 25: # Disable this for now
+    _img = img if np.prod(img.shape) < 10000000 else img[::4,::4,::4] # Hack for big images
+    if scipy.stats.skew(_img.reshape(-1)) > 25:
         return 1 # Truncated log + 10
     return 0 # None
 
@@ -119,11 +122,16 @@ def compress_image(img, level="normal"):
         return comp, [3, str(img.dtype), *img.shape]
     if min(img.shape) > 10: # Compress volumes as a video in vp9 format (format code 1)
         bitrate = 20000000 if level == "normal" else 40000000 if level == "high" else 10000000
+        # We normalise in a complicated way to reduce memory usage for large images
         maxplanes = np.quantile(img, .999)
         minplanes = np.min(img)
-        img = np.minimum(img, maxplanes)
+        imgnorm = img.copy()
+        imgnorm[imgnorm>maxplanes] = maxplanes
         print(maxplanes, minplanes)
-        imgnorm = ((img-minplanes)/(maxplanes-minplanes)*255).astype("uint8")
+        imgnorm -= minplanes
+        for i in range(0, imgnorm.shape[0]):
+            imgnorm[i] = imgnorm[i]/(maxplanes-minplanes)*255
+        imgnorm = imgnorm.astype("uint8")
         zdim = np.argmin(imgnorm.shape) # Thin dimension may not be z
         imgnorm = imgnorm.swapaxes(zdim, 0)
         # We need to make the image a size multiple of 16
