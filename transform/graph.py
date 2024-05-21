@@ -88,7 +88,7 @@ class TransformGraph:
 
         """
         components = []
-        for n in g.nodes:
+        for n in self.nodes:
             # Make sure n isn't accounted for already
             if any([n in c for c in components]):
                 continue
@@ -98,7 +98,7 @@ class TransformGraph:
             to_search = [n]
             while len(to_search) > 0:
                 node = to_search.pop()
-                connected = list(g.edges[node].keys())
+                connected = list(self.edges[node].keys())
                 to_search.extend([c for c in connected if c not in current_component])
                 current_component = current_component.union(set(connected))
             components.append(current_component)

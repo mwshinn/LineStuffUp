@@ -1,6 +1,7 @@
 import numpy as np
 import scipy
 from .ndarray_shifted import ndarray_shifted
+from .utils import blit
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
@@ -221,6 +222,9 @@ class AffineTransform:
         # performed.
         if np.all(self.matrix == np.eye(3)) and relative is True:
             return ndarray_shifted(image, origin=self.shift)
+        else:
+            newimg = np.zeros_like(image)
+            return blit(image, newimg, self.shift) # TODO test, not sure if this works
         return super().transform_image(image, relative=relative, labels=labels)
 
 

@@ -6,6 +6,35 @@ import vispy
 from . import utils
 from .ndarray_shifted import ndarray_shifted
 
+class GraphViewer(napari.Viewer):
+    def __init__(self, graph, space=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        object.__setattr__(self, "graph", graph)
+        object.__setattr__(self, "space", space)
+    def _get_data_and_origin(self, data, space):
+        if isinstance(data, str):
+            space = data if space is None else space
+            data = self.graph.get_image(data)
+        if self.space is None and space is not None: # First image sets the space if unset
+            object.__setattr__(self, "space", space)
+        print(self.space, space)
+        if self.space is not None and space is not None:
+            data = self.graph.get_transform(space, self.space).transform_image(data)
+        origin = data.origin if isinstance(data, ndarray_shifted) else np.zeros_like(data.shape)
+        return data, origin
+    def add_image(self, data, space=None, **kwargs):
+        data, origin = self._get_data_and_origin(data, space)
+        print("p", data, origin)
+        return super().add_image(data, translate=-origin, **kwargs)
+    def add_labels(self, data, space=None, **kwargs):
+        data, origin = self._get_data_and_origin(data, space)
+        print("p", data, origin)
+        return super().add_labels(data, translate=-origin, **kwargs)
+    def add_points(self, data, space=None, **kwargs):
+        if space is not None and self.space is not None:
+            data = self.graph.get_transform(space, self.space).transform(data)
+        return super().add_points(data, **kwargs)
+
 # Deprecated, functionality is in alignment_gui
 def edit_transform(base_image, movable_image, transform):
     return alignment_gui(base_image, movable_image, transform_type=transform.__class__, initial_movable_points=transform.points_start, initial_base_points=transform.points_end)
