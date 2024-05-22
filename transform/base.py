@@ -140,10 +140,11 @@ class Transform:
         mapped_grid -= origin_adjust
         print("mapped grid dtype", mapped_grid.dtype)
         displacement = mapped_grid.reshape(*shape[::-1],3).T
-        # Prefilter == False speeds it up by about 20%.  Supposedly it makes the
-        # output images blurrier though, having't done a comparison yet.
+        # Prefilter == False speeds it up a lot when going from big images to
+        # small images.  Supposedly it makes the output images blurrier though,
+        # having't done a comparison yet.
         order = 0 if labels else 3
-        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=(not labels), order=order), origin=origin)
+        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=-origin) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
@@ -220,11 +221,13 @@ class AffineTransform:
     def transform_image(self, image, relative=True, labels=False):
         # Optimisation for the case where no image transform needs to be
         # performed.
-        if np.all(self.matrix == np.eye(3)) and relative is True:
-            return ndarray_shifted(image, origin=self.shift)
-        else:
-            newimg = np.zeros_like(image)
-            return blit(image, newimg, self.shift) # TODO test, not sure if this works
+        if np.all(self.matrix == np.eye(3)):
+            if relative is True:
+                return ndarray_shifted(image, origin=self.shift)
+            # else:
+            #     newimg = np.zeros_like(image)
+            #     blit(image, newimg, self.shift) # TODO test, not sure if this works
+            #     return newimg
         return super().transform_image(image, relative=relative, labels=labels)
 
 

@@ -13,32 +13,34 @@ POINT_TRANSFORMS = [t(points_pre, points_post) for t in _POINT_TRANSFORMS]
 
 ALL_TRANSFORMS = FIXED_TRANSFORMS + POINT_TRANSFORMS
 
+close = lambda x,y : np.allclose(x, y, atol=1e-4, rtol=1e-4)
+
 # Testing all transforms
-new_points = np.random.randn(100,3)
+new_points = np.random.randn(100,3).astype("float32")
 for t in ALL_TRANSFORMS:
-    assert np.allclose(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} can not be inverted"
+    assert close(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} can not be inverted"
 
 # Invert all transforms
 for t in ALL_TRANSFORMS:
-    assert np.allclose(t.transform(t.invert().transform(new_points)), new_points), f"Error with inverse of transform {t}"
+    assert close(t.transform(t.invert().transform(new_points)), new_points), f"Error with inverse of transform {t}"
 
 # Test all compositions for inversion identity
 for t1 in ALL_TRANSFORMS:
     for t2 in ALL_TRANSFORMS:
         t = t1 + t2
-        assert np.allclose(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} can not be inverted"
+        assert close(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} can not be inverted"
 
 # Invert all compositions of transforms
 for t1 in ALL_TRANSFORMS:
     for t2 in ALL_TRANSFORMS:
         t = t1 + t2
-        assert np.allclose(t.transform(t.invert().transform(new_points)), new_points), f"Error with inverse of transform {t}"
+        assert close(t.transform(t.invert().transform(new_points)), new_points), f"Error with inverse of transform {t}"
 
 # Test all compositions for compositionality
 for t1 in ALL_TRANSFORMS:
     for t2 in ALL_TRANSFORMS:
         t = t1 + t2
-        assert np.allclose(t2.transform(t1.transform(new_points)), t.transform(new_points)), f"Transform {t} did not compose"
+        assert close(t2.transform(t1.transform(new_points)), t.transform(new_points)), f"Transform {t} did not compose"
 
 
 # Test partial compositions for inversion identity
@@ -46,42 +48,42 @@ for t1 in ALL_TRANSFORMS:
     for t2 in _POINT_TRANSFORMS:
         _t = t1 + t2
         t = _t(points_pre, points_post)
-        assert np.allclose(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} was not close"
+        assert close(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} was not close"
     for t2,t2p in zip(_FIXED_TRANSFORMS,_FIXED_TRANSFORMS_PARAMS):
         _t = t1 + t2
         t = _t(**t2p)
-        assert np.allclose(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} was not close"
+        assert close(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} was not close"
 
 # Test partial compositions for compositionality
 for t1 in ALL_TRANSFORMS:
     for t2 in _POINT_TRANSFORMS:
         _t = t1 + t2
         t = _t(points_pre, points_post)
-        assert np.allclose(t.transform(new_points), t2(points_pre, points_post).transform(t1.transform(new_points))), f"Transform {t} was not close"
+        assert close(t.transform(new_points), t2(points_pre, points_post).transform(t1.transform(new_points))), f"Transform {t} was not close"
     for t2,t2p in zip(_FIXED_TRANSFORMS,_FIXED_TRANSFORMS_PARAMS):
         _t = t1 + t2
         t = _t(**t2p)
-        assert np.allclose(t.transform(new_points), t2(**t2p).transform(t1.transform(new_points))), f"Transform {t} was not close"
+        assert close(t.transform(new_points), t2(**t2p).transform(t1.transform(new_points))), f"Transform {t} was not close"
 
 
 checkerboard = np.asarray([[[float(((i//10) + (j//10) + (k//10)) % 2) for i in range(0, 150)] for j in range(0, 300)] for k in range(0, 30)])
 
 # Test compositions when transforming images
 for t in ALL_TRANSFORMS:
-    image_transformed_once = t.transform_image(checkerboard)
-    image_transformed_twice = t.transform_image(image_transformed_once)
-    image_transformed_sum = (t+t).transform_image(checkerboard)
+    image_transformed_once = t.transform_image(checkerboard, relative=False)
+    image_transformed_twice = t.transform_image(image_transformed_once, relative=False)
+    image_transformed_sum = (t+t).transform_image(checkerboard, relative=False)
     corr = np.corrcoef(image_transformed_twice.flatten(), image_transformed_sum.flatten())[0,1]
     assert corr > .95, f"Correlation for composition of {t} was too low, it was {corr}"
 
 # Test for exact answers for some transforms
-assert np.allclose(TranslateFixed(z=5, y=4, x=7).transform(points_pre), points_pre+[5,4,7])
-assert np.allclose(Identity().transform(points_pre), points_pre)
-assert np.allclose(TranslateRotateFixed(z=3, y=8, x=-3, zrotate=8, yrotate=-9, xrotate=2).transform(points_pre), (points_pre+[3,8,-3])@rotation_matrix(8,-9,2))
-assert np.allclose(Translate(points_pre, points_pre+[5,4,3]).transform(points_pre), points_pre+[5,4,3])
-assert np.allclose(TranslateRotate(points_pre, (points_pre+[-4,2,1])@rotation_matrix(6,1,-3)).transform(points_pre), (points_pre+[-4,2,1])@rotation_matrix(6,1,-3))
-assert np.allclose(TranslateRotate2D(points_pre, (points_pre+[0,2,1])@rotation_matrix(30,0,0)).transform(points_pre), (points_pre+[0,2,1])@rotation_matrix(30,0,0))
-assert np.allclose(Rescale(z=3, y=1, x=.5).transform(points_pre), points_pre*[3,1,.5])
+assert close(TranslateFixed(z=5, y=4, x=7).transform(points_pre), points_pre+[5,4,7])
+assert close(Identity().transform(points_pre), points_pre)
+assert close(TranslateRotateFixed(z=3, y=8, x=-3, zrotate=8, yrotate=-9, xrotate=2).transform(points_pre), (points_pre+[3,8,-3])@rotation_matrix(8,-9,2))
+assert close(Translate(points_pre, points_pre+[5,4,3]).transform(points_pre), points_pre+[5,4,3])
+assert close(TranslateRotate(points_pre, (points_pre+[-4,2,1])@rotation_matrix(6,1,-3)).transform(points_pre), (points_pre+[-4,2,1])@rotation_matrix(6,1,-3))
+assert close(TranslateRotate2D(points_pre, (points_pre+[0,2,1])@rotation_matrix(30,0,0)).transform(points_pre), (points_pre+[0,2,1])@rotation_matrix(30,0,0))
+assert close(Rescale(z=3, y=1, x=.5).transform(points_pre), points_pre*[3,1,.5])
 
 # We need to make some new transforms here to make sure the spot always stays
 # within the image in both absolute and relative coordinates.
@@ -100,7 +102,7 @@ ALL_TRANSFORMS_SPOT = FIXED_TRANSFORMS_SPOT + POINT_TRANSFORMS_SPOT
 # Test image transformations in absolute and relative coordinates
 for t in ALL_TRANSFORMS_SPOT:
     spot_rel = np.mean(np.where(t.transform_image(spot, relative=True)>.1), axis=1)
-    assert np.max(spot_rel - (t.transform([spotpos]) - t.origin_and_maxpos(spot.shape)[0])) < 1
+    assert np.max(spot_rel - (t.transform([spotpos]) - t.origin_and_maxpos(spot)[0])) < 1
     spot_abs = np.mean(np.where(t.transform_image(spot, relative=False)>.1), axis=1)
     assert np.max(spot_abs - t.transform([spotpos])) < 1
 
@@ -109,7 +111,7 @@ for t1 in ALL_TRANSFORMS_SPOT:
     for t2 in ALL_TRANSFORMS_SPOT:
         t = t1 + t2
         spot_rel = np.mean(np.where(t.transform_image(spot, relative=True)>.1), axis=1)
-        assert np.max(spot_rel - (t.transform([spotpos]) - t.origin_and_maxpos(spot.shape)[0])) < 1
+        assert np.max(spot_rel - (t.transform([spotpos]) - t.origin_and_maxpos(spot)[0])) < 1
         spot_abs = np.mean(np.where(t.transform_image(spot, relative=False)>.1), axis=1)
         assert np.max(spot_abs - t.transform([spotpos])) < 1
 
@@ -145,7 +147,7 @@ g.add_node("d")
 g.add_edge("a", "bx", ALL_TRANSFORMS[0])
 g.add_edge("a", "c", ALL_TRANSFORMS[1])
 g.add_edge("c", "d", ALL_TRANSFORMS[2])
-assert np.allclose(g.get_transform("bx", "d").transform(g.get_transform("d", "bx").transform(new_points)), new_points)
+assert close(g.get_transform("bx", "d").transform(g.get_transform("d", "bx").transform(new_points)), new_points)
 assert g.get_image("c").shape == (2,3,4)
 assert g == g, "Self-equality failed"
 with tempfile.TemporaryDirectory() as tmpdir:

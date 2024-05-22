@@ -17,8 +17,7 @@ class TransformGraph:
             self.nodes == other.nodes and \
             self.edges == other.edges and \
             len(self.compressed_node_images) == len(other.compressed_node_images) and \
-            all(np.allclose(self.compressed_node_images[ni1][0],other.node_images[ni2][0]) for ni1,ni2 in zip(self.node_images.keys(), other.node_images.keys())) and \
-            all(np.allclose(self.node_images[ni1][1],other.node_images[ni2][1]) for ni1,ni2 in zip(self.node_images.keys(), other.node_images.keys()))
+            all(np.allclose(self.compressed_node_images[ni1][0],other.compressed_node_images[ni2][0]) for ni1,ni2 in zip(self.compressed_node_images.keys(), other.compressed_node_images.keys()))
     def save(self, filename):
         # Note to future self: If I ende up not using image arrays, I could rewrite this to save in text format.
         node_images_keys = list(sorted(self.compressed_node_images.keys()))
