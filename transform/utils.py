@@ -200,3 +200,25 @@ def decompress_image(data, kind):
         return np.frombuffer(imgfile, dtype=kind[1]).reshape(*kind[2:].astype('int'))
     raise ValueError(f"Invalid kind {kind}")
 
+def invert_function_numerical(func, point):
+    point = np.asarray(point)
+    obj = lambda x : np.sum(np.square(point-func(np.asarray([x]))))
+    starts = [[0, 0, 0], point]
+    opts = []
+    for start in starts:
+        opts.append(scipy.optimize.minimize(obj, x0=start))
+    return min(opts, key=lambda x : x.fun).x
+
+def invert_transform_numerical(tform, points):
+    """Perform a numerical inverse transform of 'tform' at 'point'"""
+    points = np.asarray(points)
+    try:
+        if points.ndim == 2:
+            return tform.invert().transform(points)[0]
+        else:
+            return tform.invert().transform(np.asarray([points]))[0]
+    except NotImplementedError:
+        pass
+    if points.ndim == 2:
+        return np.asarray([invert_transform_numerical(tform, points[i]) for i in range(0, points.shape[0])])
+    return invert_function_numerical(tform.transform, np.asarray([x]))

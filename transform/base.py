@@ -1,7 +1,7 @@
 import numpy as np
 import scipy
 from .ndarray_shifted import ndarray_shifted
-from .utils import blit
+from .utils import blit, invert_function_numerical
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
@@ -53,6 +53,8 @@ class Transform:
     GUI_DRAG_PARAMETERS = [None, None, None]
     def __init__(self, **kwargs):
         # Initialise parameters to either pass values or defaults
+        if hasattr(self, "EXTRA_DEFAULT_PARAMETERS"): # For non-invertable transforms
+            self.DEFAULT_PARAMETERS = {**self.DEFAULT_PARAMETERS, **self.EXTRA_DEFAULT_PARAMETERS}
         self.params = {}
         for k in self.DEFAULT_PARAMETERS.keys():
             self.params[k] = kwargs[k] if k in kwargs else self.DEFAULT_PARAMETERS[k]
@@ -76,6 +78,12 @@ class Transform:
     def __add__(self, other):
         return compose_transforms(self, other)
     def transform(self, points):
+        points = np.asarray(points)
+        if points.ndim == 1:
+            points = points[None]
+        assert points.shape[1] == 3, "Input points must be in volume space"
+        return self._transform(points)
+    def _transform(self, points):
         """Forward mapping function for the transformation"""
         raise NotImplementedError("Please subclass and replace")
     def inverse_transform(self, points):
@@ -90,7 +98,6 @@ class Transform:
         """When using relative mode for image transformation, find the corners of the bounds based on the input image size"""
         input_bounds = img.shape
         origin_offset = img.origin if isinstance(img, ndarray_shifted) else [0,0,0]
-        print(origin_offset)
         if input_bounds is not None:
             corners_pretransform = [[a, b, c] for a in [0, input_bounds[0]] for b in [0, input_bounds[1]] for c in [0, input_bounds[2]]]
             corners_pretransform = corners_pretransform + np.asarray(origin_offset)
@@ -124,6 +131,8 @@ class Transform:
             shape = np.asarray(img.shape).astype(int)
             origin = np.zeros(3, dtype="float32")
         origin_adjust = img.origin if isinstance(img, ndarray_shifted) else np.asarray([0,0,0], dtype="float32")
+        if img.shape[0] == 1: # This is a hack to get around thickness=1 images disappearing in the map_coordinates function 
+            img = np.concatenate([img, img])
         # First, we construct a list of coordinates of all the pixels in the
         # image, and transform them to find out which point is mapped to which
         # other point.  Then, we inverse transform them to construct a matrix of
@@ -134,11 +143,9 @@ class Transform:
         grid = meshgrid.T.reshape(-1,3)
         del meshgrid
         grid += origin
-        print("dtypes", grid.dtype, origin.dtype, origin_adjust.dtype)
         mapped_grid = self.inverse_transform(grid)
         del grid
         mapped_grid -= origin_adjust
-        print("mapped grid dtype", mapped_grid.dtype)
         displacement = mapped_grid.reshape(*shape[::-1],3).T
         # Prefilter == False speeds it up a lot when going from big images to
         # small images.  Supposedly it makes the output images blurrier though,
@@ -189,14 +196,6 @@ class PointTransform(Transform):
             ret += f", {k}={v}"
         ret += ")"
         return ret
-    def invert(self):
-        """Invert the transform.
-
-        Note: This will return incorrect results for some non-affine transforms.
-        Currently it just swaps the order of the points.
-
-        """
-        return self.__class__(points_start=self.points_end, points_end=self.points_start, **self.params)
 
 class AffineTransform:
     """AffineTransform should always be inherited with PointTransform
@@ -208,16 +207,16 @@ class AffineTransform:
     self.points_end.
 
     """
-    def transform(self, points):
+    def _transform(self, points):
         points = np.asarray(points)
         if points.shape[0] == 0:
             return points
         return (points - self.shift) @ self.matrix
-    def inverse_transform(self, points):
-        points = np.asarray(points, dtype="float32")
-        if points.shape[0] == 0:
-            return points
-        return points @ np.linalg.inv(self.matrix.astype("float32")) + self.shift.astype("float32")
+    # def inverse_transform(self, points):
+    #     points = np.asarray(points, dtype="float32")
+    #     if points.shape[0] == 0:
+    #         return points
+    #     return points @ np.linalg.inv(self.matrix.astype("float32")) + self.shift.astype("float32")
     def transform_image(self, image, relative=True, labels=False):
         # Optimisation for the case where no image transform needs to be
         # performed.
@@ -229,7 +228,30 @@ class AffineTransform:
             #     blit(image, newimg, self.shift) # TODO test, not sure if this works
             #     return newimg
         return super().transform_image(image, relative=relative, labels=labels)
+    def invert(self):
+        """Invert the transform.
 
+        Note: This will return incorrect results for some non-affine transforms.
+        Currently it just swaps the order of the points.
+
+        """
+        return self.__class__(points_start=self.points_end, points_end=self.points_start, **self.params)
+
+class PointTransformNoInverse(PointTransform):
+    EXTRA_DEFAULT_PARAMETERS = {"invert": True}
+    # Use the inverse transform by default
+    def transform(self, points):
+        points = np.asarray(points)
+        if points.ndim == 1:
+            points = points[None]
+        assert points.shape[1] == 3, "Input points must be in volume space"
+        if self.params["invert"]:
+            return self._transform(points, points_start=self.points_start, points_end=self.points_end)
+        else:
+            return np.asarray([invert_function_numerical(lambda x,self=self : self._transform(x, self.points_end, self.points_start), p) for p in points])
+    def invert(self):
+        return self.__class__(points_start=self.points_end, points_end=self.points_start, invert=(not self.params["invert"]))
+        
 
 class TranslateRotate(AffineTransform,PointTransform):
     def _fit(self):
@@ -296,8 +318,10 @@ class TranslateRotateRescale2DFixed(AffineTransform,Transform):
 class ShearFixed(AffineTransform,Transform):
     DEFAULT_PARAMETERS = {"yzshear": 0, "xzshear": 0, "xyshear": 0}
     def _fit(self):
-        self.shift = [0, 0, 0]
+        self.shift = np.zeros(3)
         self.matrix = np.asarray([[1, 0, 0], [self.params["yzshear"], 1, 0], [self.params["xzshear"], self.params["xyshear"], 1]])
+    def invert(self):
+        return self.__class__(yzshear=-self.params["yzshear"], xzshear=self.params["xyshear"]*self.params["yzshear"]-self.params["xzshear"], xyshear=-self.params["xyshear"])
 
 Shear = ShearFixed
 # class TranslateRotateRescaleUniform2D(AffineTransform,PointTransform):
@@ -323,14 +347,15 @@ class Identity(AffineTransform,Transform):
     def _fit(self):
         self.matrix = np.eye(3)
         self.shift = np.zeros(3)
-    def transform(self, points):
+    def _transform(self, points):
         return points
-    def inverse_transform(self, points):
-        return points
+    # def inverse_transform(self, points):
+    #     return points
     def invert(self):
         return self.__class__()
     def transform_image(self, image, relative=True, labels=False):
         """More efficient implementation of image transformation"""
+        # TODO This doesn't work for relative mode
         return image
 
 # class TransformSquareWeightedInterpolation(Transform):
@@ -371,21 +396,21 @@ class Rescale(AffineTransform,Transform):
     def invert(self):
         return self.__class__(z=1/self.params["z"], y=1/self.params["y"], x=1/self.params["x"])
 
-from scipy.interpolate import griddata
+# from scipy.interpolate import griddata
 
-class _CoDelaunay(scipy.spatial.Delaunay):
-    def __init__(self, points_to_fit, points_to_access, *args, **kwargs):
-        super().__init__(points=points_to_fit, *args, **kwargs)
-        self.points_to_access = points_to_access
-    def __getattribute__(self, name):
-        if name == "points":
-            return self.points_to_access
-        if name == "max_bound":
-            return np.max(self.points_to_access, axis=0)
-        if name == "min_bound":
-            return np.min(self.points_to_access, axis=0)
-        else:
-            return super().__getattribute__(name)
+# class _CoDelaunay(scipy.spatial.Delaunay):
+#     def __init__(self, points_to_fit, points_to_access, *args, **kwargs):
+#         super().__init__(points=points_to_fit, *args, **kwargs)
+#         self.points_to_access = points_to_access
+#     def __getattribute__(self, name):
+#         if name == "points":
+#             return self.points_to_access
+#         if name == "max_bound":
+#             return np.max(self.points_to_access, axis=0)
+#         if name == "min_bound":
+#             return np.min(self.points_to_access, axis=0)
+#         else:
+#             return super().__getattribute__(name)
 
 # class Triangulation2D(PointTransform):
 #     DEFAULT_PARAMETERS = {"invert": False}
@@ -468,19 +493,23 @@ class _CoDelaunay(scipy.spatial.Delaunay):
 #         return np.concatenate([zcoords[:,None], ycoords[:,None], xcoords[:,None]], axis=1)
 
 class Triangulation(PointTransform):
-    DEFAULT_PARAMETERS = {"invert": False}
+    DEFAULT_PARAMETERS = {"invert": True} # Start with inverted because inverted is slower for points and faster for images
     def _fit(self):
         # To avoid out of bounds, we add a few pseudo points.  We do this by
-        # finding the convex hull, centering it, scaling it, and then shifting
-        # the scaled points back from the centering.  We assign these points a
-        # simple linear transformed version of the points they are derived from.
-        SCALE_FACTOR = 1000
+        # finding the convex hull, centering it, and scaling it, and then
+        # shifting the scaled points back from the centering.  To avoid sharp
+        # angles for near-coplannar point clouds, we shift the points in all
+        # dimensions by a small value first.  We assign these points a simple
+        # linear transformed version of the points they are derived from.
+        SCALE_FACTOR = 100
         if self.params["invert"]:
             before = self.points_end
             after = self.points_start
         else:
             before = self.points_start
             after = self.points_end
+        _rns = np.random.RandomState(0).randn(*before.shape)*.0001 # Break symmetry
+        before = before + _rns
         t = scipy.spatial.Delaunay(before) # Triangulation
         assert np.all(t.points == before), "Coplannar points"
         hull_points_inds = np.unique(t.convex_hull.flatten())
@@ -488,28 +517,45 @@ class Triangulation(PointTransform):
         hull_mean_shift = np.mean(before[hull_points_inds], axis=0)
         if self.params["invert"]:
             self.pseudopoints_end = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+            #self.pseudopoints_end += 5*SCALE_FACTOR*np.sign(self.pseudopoints_end-hull_mean_shift)
             self.pseudopoints_start = self.pseudopoints_end + hull_points_vecs
         else:
             self.pseudopoints_start = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+            #self.pseudopoints_start += 5*SCALE_FACTOR*np.sign(self.pseudopoints_start-hull_mean_shift)
             self.pseudopoints_end = self.pseudopoints_start + hull_points_vecs
         self.all_points_start = np.concatenate([self.points_start, self.pseudopoints_start])
         self.all_points_end = np.concatenate([self.points_end, self.pseudopoints_end])
-    def transform(self, points):
+    def _transform(self, points):
+        points = np.asarray(points)
         start = self.all_points_start
         end = self.all_points_end
         tri_points = self.all_points_start if not self.params["invert"] else self.all_points_end
-        rns = np.random.RandomState(0).randn(*tri_points.shape)*.0001 # Break symmetry
-        delaunay = scipy.spatial.Delaunay(tri_points+rns)
+        _rns = np.random.RandomState(0).randn(*tri_points.shape)*.0001 # Break symmetry
+        delaunay = scipy.spatial.Delaunay(tri_points+_rns)
         assert np.max(delaunay.points-tri_points)<.1, "Wrong order of Delaunay triangulation, are some points coplannar?"
-        newpoints = np.zeros_like(points)*np.nan
-        for simp in delaunay.simplices:
-            insimp = scipy.spatial.Delaunay(start[simp]).find_simplex(points)>=0
-            coefs_rhs = np.concatenate([start[simp], np.ones(len(simp))[:,None]], axis=1)
-            coefs_lhs = end[simp]
-            params = np.linalg.inv(coefs_rhs) @ coefs_lhs
-            newpoints[insimp] = np.concatenate([points[insimp], np.ones(sum(insimp))[:,None]], axis=1) @ params
-        assert not np.any(np.isnan(newpoints)), "Point was outside of simplex or invalid input points"
-        return newpoints
+        if self.params['invert']:
+            newpoints = np.zeros_like(points)*np.nan
+            for simp in delaunay.simplices:
+                insimp = scipy.spatial.Delaunay(start[simp]).find_simplex(points)>=0
+                if np.sum(insimp) == 0: continue
+                coefs_rhs = np.concatenate([start[simp], np.ones(len(simp))[:,None]], axis=1)
+                coefs_lhs = end[simp]
+                params = np.linalg.inv(coefs_rhs) @ coefs_lhs
+                newpoints[insimp] = np.concatenate([points[insimp], np.ones(sum(insimp))[:,None]], axis=1) @ params
+            assert not np.any(np.isnan(newpoints)), "Point was outside of simplex or invalid input points"
+            return newpoints
+        else: # For the non-inverted case, we can use the original triangulation and improve performance
+            insimp = delaunay.find_simplex(points)
+            assert np.all(insimp>=0), "Points outside domain, increase scale factor in code"
+            newpoints = np.zeros_like(points)*np.nan
+            for i,simp in enumerate(delaunay.simplices):
+                if np.sum(insimp==i) == 0: continue
+                coefs_rhs = np.concatenate([start[simp], np.ones(len(simp))[:,None]], axis=1)
+                coefs_lhs = end[simp]
+                params = np.linalg.inv(coefs_rhs) @ coefs_lhs
+                newpoints[insimp==i] = np.concatenate([points[insimp==i], np.ones(sum(insimp==i))[:,None]], axis=1) @ params
+            assert not np.any(np.isnan(newpoints)), "Not sure why this should ever happen?"
+            return newpoints
     def invert(self):
         return self.__class__(invert=(not self.params["invert"]), points_start=self.points_end, points_end=self.points_start)
 
@@ -536,11 +582,13 @@ class Triangulation2D(PointTransform):
             self.pseudopoints_end = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
             self.pseudopoints_start = self.pseudopoints_end + hull_points_vecs
         else:
-            self.pseudopoints_start = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+            self.pseudopoints_start = SCALE_FACTOR*(before[hull_points_inds] -
+                                                    hull_mean_shift) + hull_mean_shift
             self.pseudopoints_end = self.pseudopoints_start + hull_points_vecs
         self.all_points_start = np.concatenate([self.points_start[:,1:], self.pseudopoints_start])
         self.all_points_end = np.concatenate([self.points_end[:,1:], self.pseudopoints_end])
-    def transform(self, points):
+    def _transform(self, points):
+        points = np.asarray(points)
         start = self.all_points_start
         end = self.all_points_end
         tri_points = self.all_points_start if not self.params["invert"] else self.all_points_end
@@ -558,6 +606,81 @@ class Triangulation2D(PointTransform):
         return np.concatenate([points[:,[0]], newpoints], axis=1)
     def invert(self):
         return self.__class__(invert=(not self.params["invert"]), points_start=self.points_end, points_end=self.points_start)
+
+# Does not define an inverse!
+class Quadratic(PointTransformNoInverse):
+    DEFAULT_PARAMETERS = {"invert": True}
+    def _fit(self):
+        p = self.points_start if not self.params['invert'] else self.points_end
+        mat = np.concatenate([p, p**2, p[:,[0]]*p[:,[1]], p[:,[0]]*p[:,[2]], p[:,[1]]*p[:,[2]], np.ones((p.shape[0], 1))], axis=1)
+        self.coefs = np.linalg.lstsq(mat, self.points_end if not self.params['invert'] else self.points_start)[0]
+    def _transform_no_inverse(self, points):
+        points = np.asarray(points)
+        mat = np.concatenate([points, points**2, points[:,[0]]*points[:,[1]], points[:,[0]]*points[:,[2]], points[:,[1]]*points[:,[2]], np.ones((points.shape[0], 1))], axis=1)
+        return mat @ self.coefs
+    def _transform(self, points, points_start, points_end):
+        if not self.params['invert']:
+            return self._transform_no_inverse(points)
+        else:
+            if points.shape[0] > 100:
+                print("Warning, performing numerical inversion, this will be slow.")
+            return np.asarray([invert_function_numerical(self._transform_no_inverse, p) for p in points])
+
+# class QuadraticAlmost(PointTransform):
+#     DEFAULT_PARAMETERS = {"invert": False}
+#     def _fit(self):
+#         if not self.params['invert']:
+#             p = self.points_start
+#             po = self.points_end
+#         else:
+#             p = self.points_end
+#             po = self.points_start
+#         mat = np.concatenate([p, p**2, p[:,[0]]*p[:,[1]], p[:,[0]]*p[:,[2]], p[:,[1]]*p[:,[2]], np.ones((p.shape[0], 1))], axis=1)
+#         outmat = np.concatenate([po, po**2, po[:,[0]]*po[:,[1]], po[:,[0]]*po[:,[2]], po[:,[1]]*po[:,[2]]], axis=1)
+#         self.coefs = np.linalg.lstsq(mat, outmat)[0]
+#         if self.params['invert']:
+#             cinv = np.linalg.inv(self.coefs[0:9])
+#             coffset = self.coefs[[9]]
+#             print(cinv.shape, coffset.shape)
+#             self.coefs = np.concatenate([cinv, -coffset @ cinv], axis=0)
+#     def transform(self, points):
+#         points = np.asarray(points)
+#         mat = np.concatenate([points, points**2, points[:,[0]]*points[:,[1]], points[:,[0]]*points[:,[2]], points[:,[1]]*points[:,[2]], np.ones((points.shape[0], 1))], axis=1)
+#         return (mat @ self.coefs)[:,0:3]
+#     def invert(self):
+#         return self.__class__(points_start=self.points_end, points_end=self.points_start, invert=(not self.params['invert']))
+
+class DistanceWeightedAverageGaussian(PointTransformNoInverse):
+    DEFAULT_PARAMETERS = {"extent": 1}
+    def _transform(self, points, points_start, points_end):
+        points = np.asarray(points, dtype="float")
+        baseline = np.zeros_like(points[:,0])
+        pos = np.zeros_like(points)
+        for i in range(0, len(points_start)):
+            mvn = scipy.stats.multivariate_normal(points_start[i], np.eye(3)*self.params["extent"])
+            baseline += mvn.pdf(points)
+            for j in range(0, 3):
+                pos[:,j] += mvn.pdf(points)*(points_end[i][j]-points_start[i][j])
+        epsilon = 1e-100 # For numerical stability
+        pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
+        pos /= (baseline[:,None] + epsilon)
+        return points + pos
+
+
+class DistanceWeightedAverage(PointTransformNoInverse):
+    def _transform(self, points, points_start, points_end):
+        points = np.asarray(points, dtype="float")
+        baseline = np.zeros_like(points[:,0])
+        pos = np.zeros_like(points)
+        epsilon = 1e-200 # For numerical stability
+        for i in range(0, len(points_start)):
+            dist = 1/(np.sum(np.square(points-points_start[i]), axis=1)+epsilon)
+            baseline += dist
+            for j in range(0, 3):
+                pos[:,j] += dist*(points_end[i][j]-points_start[i][j])
+        pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
+        pos /= baseline[:,None]
+        return points + pos
 
 def compose_transforms(a, b):
     # Special cases for linear and for adding to a class (not yet fitted)
@@ -605,7 +728,7 @@ def compose_transforms(a, b):
                     self.b_type = b
                     self.b = b(*args, **kwargs, **extra_args)
                     super().__init__(**extra_args)
-                def transform(self, points):
+                def _transform(self, points):
                     return self.b.transform(a.transform(points))
                 def inverse_transform(self, points):
                     return a.inverse_transform(self.b.inverse_transform(points))

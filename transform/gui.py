@@ -11,33 +11,38 @@ class GraphViewer(napari.Viewer):
         super().__init__(*args, **kwargs)
         object.__setattr__(self, "graph", graph)
         object.__setattr__(self, "space", space)
-    def _get_data_and_origin(self, data, space):
+        if isinstance(space, str):
+            self.title = f"Alignment in {space} space"
+    def _get_data_origin_name(self, data, space, labels=False):
+        name = "data"
         if isinstance(data, str):
+            name = data
             space = data if space is None else space
             data = self.graph.get_image(data)
         if self.space is None and space is not None: # First image sets the space if unset
             object.__setattr__(self, "space", space)
-        print(self.space, space)
-        if self.space is not None and space is not None:
-            data = self.graph.get_transform(space, self.space).transform_image(data)
+            self.title = f"Alignment in {space} space"
+        if data.shape[0] == 1:
+            data = data * np.ones((2,1,1), dtype="int") # TODO Hack for now when we can't see 1-plane images in napari
+        if self.space is not None and space is not None and self.space != space:
+            data = self.graph.get_transform(space, self.space).transform_image(data, labels=labels)
         origin = data.origin if isinstance(data, ndarray_shifted) else np.zeros_like(data.shape)
-        return data, origin
+        return data, origin, name
     def add_image(self, data, space=None, **kwargs):
-        data, origin = self._get_data_and_origin(data, space)
-        print("p", data, origin)
-        return super().add_image(data, translate=-origin, **kwargs)
+        data, origin, name = self._get_data_origin_name(data, space)
+        return super().add_image(data, translate=-origin, name=name, **kwargs)
     def add_labels(self, data, space=None, **kwargs):
-        data, origin = self._get_data_and_origin(data, space)
-        print("p", data, origin)
-        return super().add_labels(data, translate=-origin, **kwargs)
+        data, origin, name = self._get_data_origin_name(data, space, labels=True)
+        print(data)
+        return super().add_labels(data, translate=-origin, name=name, **kwargs)
     def add_points(self, data, space=None, **kwargs):
         if space is not None and self.space is not None:
             data = self.graph.get_transform(space, self.space).transform(data)
         return super().add_points(data, **kwargs)
 
 # Deprecated, functionality is in alignment_gui
-def edit_transform(base_image, movable_image, transform):
-    return alignment_gui(base_image, movable_image, transform_type=transform.__class__, initial_movable_points=transform.points_start, initial_base_points=transform.points_end)
+def edit_transform(movable_image, base_image, transform):
+    return alignment_gui(movable_image, base_image, transform_type=transform.__class__, initial_movable_points=transform.points_start, initial_base_points=transform.points_end)
 
 def plot_from_graph(g, ims, output_space=None):
     """Given a graph g, plot each of the images in the list ims, using the first as a coordinate reference (base).
@@ -71,9 +76,9 @@ def plot_from_graph(g, ims, output_space=None):
     references = []
     if len(els) > 1:
         references = els[1:]
-    alignment_gui(base_image, els[0][0], els[0][1], references=references)
+    alignment_gui(els[0][0], base_image, els[0][1], references=references)
 
-def alignment_gui(base_image, movable_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, references=[]):
+def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, references=[]):
     """Align images
 
     If `base_image` and/or `movable_image` are tuples, they will be interpreted
@@ -109,11 +114,11 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
     movable_points = [] if initial_movable_points is None else list(initial_movable_points)
     tform_type = transform_type
     layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])) for bi in base_image]
-    layers_movable = [v.add_image(tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi)), colormap="blue", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi)[0]) for mi in movable_image]
-    layers_reference = [v.add_image(rt.transform_image(ri, relative=True, labels=utils.image_is_label(ri)), colormap="green", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri)[0]) for i,(ri,rt) in enumerate(references)]
+    layers_movable = [v.add_image(tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi)), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi)[0]) for mi in movable_image]
+    layers_reference = [v.add_image(rt.transform_image(ri, relative=True, labels=utils.image_is_label(ri)), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri)[0]) for i,(ri,rt) in enumerate(references)]
     if is_point_transform:
         layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
-        layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, .6, 1, 1])
+        layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, 1, .6, 1])
         layer_base_points.data = base_points
         layer_movable_points.data = movable_points
         layer_base_points.editable = False
@@ -147,7 +152,7 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
                 return
             # Step 3a: Process movable layer click
             base_points.append(temp_points[0])
-            movable_points.append(pretransform.transform(tform.inverse_transform([e.position]))[0])
+            movable_points.append(pretransform.transform(utils.invert_transform_numerical(tform, e.position)))
             for layer_movable in layers_movable:
                 layer_movable.mouse_drag_callbacks.pop()
             for layer_base in layers_base:
@@ -229,7 +234,9 @@ def alignment_gui(base_image, movable_image, transform_type=Translate, initial_b
             # This if statement is a special case optimisation for
             # AffineTransforms only to avoid rerending the image if only the
             # origin/translation has changed.
-            if _prev_matrix is None or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
+            print("prev matrix", _prev_matrix, tform)
+            if _prev_matrix is None or (not isinstance(tform, AffineTransform)) or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
+                print("Updated")
                 layer_movable.data = tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi))
             layer_movable.translate = tform.origin_and_maxpos(mi)[0]
             layer_movable.refresh()

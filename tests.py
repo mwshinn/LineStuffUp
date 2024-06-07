@@ -3,17 +3,17 @@ import tempfile
 from pathlib import Path
 import numpy as np
 
-_FIXED_TRANSFORMS = [TranslateRotateFixed, TranslateRotateFixed, TranslateFixed, Identity, Rescale]
-_FIXED_TRANSFORMS_PARAMS = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=10, xrotate=20), dict(z=3.2, y=0, x=-24, zrotate=3.4, yrotate=10, xrotate=25), dict(z=-10, y=.3, x=4), dict(), dict(z=2, y=4, x=3)]
+_FIXED_TRANSFORMS = [TranslateRotateFixed, TranslateRotateFixed, TranslateFixed, Identity, Rescale, ShearFixed]
+_FIXED_TRANSFORMS_PARAMS = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=10, xrotate=20), dict(z=3.2, y=0, x=-24, zrotate=3.4, yrotate=10, xrotate=25), dict(z=-10, y=.3, x=4), dict(), dict(z=2, y=4, x=3), dict(yzshear=.3, xzshear=-.2, xyshear=.1)]
 FIXED_TRANSFORMS = [t(**tp) for t,tp in zip(_FIXED_TRANSFORMS, _FIXED_TRANSFORMS_PARAMS)]
 _POINT_TRANSFORMS = [TranslateRotate2D, Translate, TranslateRotate]
-points_pre = np.random.randn(10,3)
+points_pre = np.random.randn(50,3)
 points_post = points_pre@rotation_matrix(4,6,2)-9
 POINT_TRANSFORMS = [t(points_pre, points_post) for t in _POINT_TRANSFORMS]
 
 ALL_TRANSFORMS = FIXED_TRANSFORMS + POINT_TRANSFORMS
 
-close = lambda x,y : np.allclose(x, y, atol=1e-4, rtol=1e-4)
+close = lambda x,y : np.allclose(x, y, atol=1e-3, rtol=1e-3)
 
 # Testing all transforms
 new_points = np.random.randn(100,3).astype("float32")

@@ -12,13 +12,16 @@ class TransformGraph:
         self.node_images = {} # If node has an associated image, node name is key and image is value
         self.compressed_node_images = {} # If a node has an associated image, the compressed version is stored here and loaded dynamically into node_images
         self.node_notes = {}
+        self.filename = None
     def __eq__(self, other):
         return (self.name == other.name) and \
             self.nodes == other.nodes and \
             self.edges == other.edges and \
             len(self.compressed_node_images) == len(other.compressed_node_images) and \
             all(np.allclose(self.compressed_node_images[ni1][0],other.compressed_node_images[ni2][0]) for ni1,ni2 in zip(self.compressed_node_images.keys(), other.compressed_node_images.keys()))
-    def save(self, filename):
+    def save(self, filename=None):
+        if filename is None:
+            filename = self.filename
         # Note to future self: If I ende up not using image arrays, I could rewrite this to save in text format.
         node_images_keys = list(sorted(self.compressed_node_images.keys()))
         node_images_values = [self.compressed_node_images[k] for k in node_images_keys]
@@ -36,6 +39,7 @@ class TransformGraph:
             g.compressed_node_images[n] = (f[f'nodeimage_{i}'], f[f'nodeimageinfo_{i}'])
         if "notes" in f.keys():
             g.node_notes = eval(str(f['notes']))
+        g.filename = filename
         return g
     @classmethod
     def load_old(cls, filename):
@@ -61,14 +65,46 @@ class TransformGraph:
         self.node_notes[name] = notes
         self.nodes.append(name)
         self.edges[name] = {}
-    def add_edge(self, frm, to, transform):
+        # TODO this doesn't handle the case where other node images refer to the given node
+    def remove_node(self, name):
+        if name in self.compressed_node_images:
+            del self.compressed_node_images[name]
+        if name in self.node_images:
+            del self.node_images[name]
+        if name in self.node_notes:
+            del self.node_notes[name]
+        for n in list(self.edges[name]):
+            del self.edges[name][n]
+            if name in self.edges[n]:
+                del self.edges[n][name]
+        self.nodes.remove(name)
+    def replace_node_image(self, name, image=None, compression="normal"):
+        """Replace or remove a node's image without impacting its other connections"""
+        # Mostly copied from add_node
+        assert name in self.nodes, f"Node '{name}' doesn't exist"
+        if name in self.node_images:
+            del self.node_images[name]
+        if image is not None: # Do this first because it may fail due to a memory error, and we don't want the node half-added
+            if isinstance(image, str):
+                self.compressed_node_images[name] = (image, [])
+            else:
+                if image.ndim == 2:
+                    image = image[None]
+                self.compressed_node_images[name] = utils.compress_image(image, level=compression)
+                self.node_images[name] = image
+        else:
+            if name in self.compressed_node_images.keys():
+                del self.compressed_node_images[name]
+    def add_edge(self, frm, to, transform, update=False):
         assert frm in self.nodes, f"Node '{frm}' doesn't exist"
         assert to in self.nodes, f"Node '{to}' doesn't exist"
-        assert to not in self.edges[frm].keys(), "Edge already exists"
+        if update is False:
+            assert to not in self.edges[frm].keys(), "Edge already exists"
+        else:
+            assert to in self.edges[frm].keys(), "Edge doesn't exist"
         self.edges[frm][to] = transform
         try:
             inv = transform.invert()
-            assert frm not in self.edges[to].keys(), "Inverse edge already exists"
             self.edges[to][frm] = inv
         except NotImplementedError:
             pass
@@ -108,6 +144,8 @@ class TransformGraph:
         for k in keys:
             del self.node_images[k]
     def get_transform(self, frm, to):
+        assert frm in self.nodes, f"Node {frm} not found"
+        assert to in self.nodes, f"Node {to} not found"
         def _get_transform_from_chain(chain):
             cur = frm
             tform = None
@@ -116,12 +154,14 @@ class TransformGraph:
                 cur = c
             return tform
         candidates = list(map(lambda x : (x,) if isinstance(x, str) else tuple(x), self.edges[frm].keys()))
+        seen = [frm]
         while len(candidates) > 0:
             if to in [l[-1] for l in candidates]:
                 chain = next(l for l in candidates if to == l[-1])
                 return _get_transform_from_chain(chain)
             c0 = candidates.pop(0)
-            to_append = [tuple(list(c0)+[n]) for n in self.edges[c0[-1]] if n not in c0]
+            seen.append(c0[-1])
+            to_append = [tuple(list(c0)+[n]) for n in self.edges[c0[-1]] if n not in seen]
             candidates.extend(to_append)
         raise RuntimeError(f"Path from '{frm}' to '{to}' not found")
     def get_image(self, node):
