@@ -78,10 +78,16 @@ class Transform:
         return compose_transforms(self, other)
     def transform(self, points):
         points = np.asarray(points)
+        is_1d = False
         if points.ndim == 1:
             points = points[None]
+            is_1d = True
+        print(points.shape)
         assert points.shape[1] == 3, "Input points must be in volume space"
-        return self._transform(points)
+        if is_1d:
+            return self._transform(points)[0]
+        else:
+            return self._transform(points)
     def _transform(self, points):
         """Forward mapping function for the transformation"""
         raise NotImplementedError("Please subclass and replace")
@@ -228,6 +234,7 @@ class AffineTransform:
         """
         return self.__class__(points_start=self.points_end, points_end=self.points_start, **self.params)
 
+# TODO improve optimisation with the jacobian
 class PointTransformNoInverse(PointTransform):
     """For transforms which do not have an analytic inverse.
 
@@ -243,17 +250,22 @@ class PointTransformNoInverse(PointTransform):
     constructor will change this.
 
     """
-    EXTRA_DEFAULT_PARAMETERS = {"invert": True}
+    EXTRA_DEFAULT_PARAMETERS = {"invert": False}
     # Use the inverse transform by default
     def transform(self, points):
         points = np.asarray(points)
+        is_1d = False
         if points.ndim == 1:
+            is_1d = True
             points = points[None]
         assert points.shape[1] == 3, "Input points must be in volume space"
         if self.params["invert"]:
-            return self._transform(points, points_start=self.points_start, points_end=self.points_end)
+            print("Fast inverse transform of", points.shape)
+            res = self._transform(points, points_start=self.points_start, points_end=self.points_end)
         else:
-            return np.asarray([invert_function_numerical(lambda x,self=self : self._transform(x, self.points_end, self.points_start), p) for p in points])
+            print("Slow transform of", points.shape)
+            res = np.asarray([invert_function_numerical(lambda x,self=self : self._transform(x, self.points_end, self.points_start), p) for p in points])
+        return res[0] if is_1d else res
     def invert(self):
         return self.__class__(points_start=self.points_end, points_end=self.points_start, invert=(not self.params["invert"]))
 
@@ -436,6 +448,85 @@ class Triangulation(PointTransform):
                 if np.sum(insimp==i) == 0: continue
                 coefs_rhs = np.concatenate([start[simp], np.ones(len(simp))[:,None]], axis=1)
                 coefs_lhs = end[simp]
+                params = np.linalg.inv(coefs_rhs) @ coefs_lhs
+                newpoints[insimp==i] = np.concatenate([points[insimp==i], np.ones(sum(insimp==i))[:,None]], axis=1) @ params
+            assert not np.any(np.isnan(newpoints)), "Not sure why this should ever happen?"
+            return newpoints
+    def invert(self):
+        return self.__class__(invert=(not self.params["invert"]), points_start=self.points_end, points_end=self.points_start)
+
+class TriangulationNew2D(PointTransform):
+    """Using a mesh/triangulation to deform the volume in two dimensions.
+
+    This uses a Delaunay triangulation for the inverse transform.  Because scipy
+    does not support using an arbitrary triangulation here, we manually iterate
+    through to determine containment of a point in each simplex instead of using
+    the built-in scipy function.  Then, we apply the relevant linear transform
+    to each.
+    """
+    DEFAULT_PARAMETERS = {"invert": True} # Start with inverted because inverted is slower for points and faster for images
+    def _fit(self):
+        # To avoid out of bounds, we add a few pseudo points.  We do this by
+        # finding the convex hull, centering it, and scaling it, and then
+        # shifting the scaled points back from the centering.  To avoid sharp
+        # angles for near-coplannar point clouds, we shift the points in all
+        # dimensions by a small value first.  We assign these points a simple
+        # linear transformed version of the points they are derived from.
+        SCALE_FACTOR = 100
+        if self.params["invert"]:
+            before = self.points_end
+            after = self.points_start
+        else:
+            before = self.points_start
+            after = self.points_end
+        t = scipy.spatial.Delaunay(before[:,1:]) # Triangulation
+        print(before[:,1:].shape, t.points, before[:,1:], t.points == before[:,1:])
+        assert np.all(t.points == before[:,1:]), "Coplannar points"
+        hull_points_inds = np.unique(t.convex_hull.flatten())
+        hull_points_vecs = after[hull_points_inds] - before[hull_points_inds]
+        hull_mean_shift = np.mean(before[hull_points_inds], axis=0)
+        if self.params["invert"]:
+            self.pseudopoints_end = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+            #self.pseudopoints_end += 5*SCALE_FACTOR*np.sign(self.pseudopoints_end-hull_mean_shift)
+            self.pseudopoints_start = self.pseudopoints_end + hull_points_vecs
+        else:
+            self.pseudopoints_start = SCALE_FACTOR*(before[hull_points_inds] - hull_mean_shift) + hull_mean_shift
+            #self.pseudopoints_start += 5*SCALE_FACTOR*np.sign(self.pseudopoints_start-hull_mean_shift)
+            self.pseudopoints_end = self.pseudopoints_start + hull_points_vecs
+        self.all_points_start = np.concatenate([self.points_start, self.pseudopoints_start])
+        self.all_points_end = np.concatenate([self.points_end, self.pseudopoints_end])
+    def _transform(self, points):
+        points = np.asarray(points)
+        start = self.all_points_start
+        end = self.all_points_end
+        tri_points = self.all_points_start if not self.params["invert"] else self.all_points_end
+        delaunay = scipy.spatial.Delaunay(tri_points[:,1:])
+        assert np.all(delaunay.points == tri_points[:,1:]), "Coplannar points"
+        if self.params['invert']:
+            newpoints = np.zeros_like(points)*np.nan
+            for simp in delaunay.simplices:
+                insimp = scipy.spatial.Delaunay(start[simp,1:]).find_simplex(points[:,1:])>=0
+                if np.sum(insimp) == 0: continue
+                _start = np.concatenate([start[simp], start[[simp[0]]]+[1, 0, 0]], axis=0)
+                _end = np.concatenate([end[simp], end[[simp[0]]]+[1, 0, 0]], axis=0)
+                coefs_rhs = np.concatenate([_start, np.ones(len(simp)+1)[:,None]], axis=1)
+                coefs_lhs = _end
+                print("shapes", coefs_lhs.shape, coefs_rhs.shape, insimp.shape, start.shape, points.shape)
+                params = np.linalg.inv(coefs_rhs) @ coefs_lhs
+                newpoints[insimp] = np.concatenate([points[insimp], np.ones(sum(insimp))[:,None]], axis=1) @ params
+            assert not np.any(np.isnan(newpoints)), "Point was outside of simplex or invalid input points"
+            return newpoints
+        else: # For the non-inverted case, we can use the original triangulation and improve performance
+            insimp = delaunay.find_simplex(points[:,1:])
+            assert np.all(insimp>=0), "Points outside domain, increase scale factor in code"
+            newpoints = np.zeros_like(points)*np.nan
+            for i,simp in enumerate(delaunay.simplices):
+                if np.sum(insimp==i) == 0: continue
+                _start = np.concatenate([start[simp], start[[simp[0]]]+[1, 0, 0]], axis=0)
+                _end = np.concatenate([end[simp], end[[simp[0]]]+[1, 0, 0]], axis=0)
+                coefs_rhs = np.concatenate([_start, np.ones(len(simp)+1)[:,None]], axis=1)
+                coefs_lhs = _end
+                print("shapes2", coefs_lhs.shape, coefs_rhs.shape, insimp.shape, start.shape, end.shape, points.shape)
                 params = np.linalg.inv(coefs_rhs) @ coefs_lhs
                 newpoints[insimp==i] = np.concatenate([points[insimp==i], np.ones(sum(insimp==i))[:,None]], axis=1) @ params
             assert not np.any(np.isnan(newpoints)), "Not sure why this should ever happen?"
