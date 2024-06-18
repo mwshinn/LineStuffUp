@@ -101,6 +101,7 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
         params = transform_type.params.copy()
         transform_type = transform_type.__class__
     else:
+        print("Setting default params")
         params = transform_type.DEFAULT_PARAMETERS.copy()
     is_point_transform = issubclass(transform_type, PointTransform)
     if not is_point_transform:
