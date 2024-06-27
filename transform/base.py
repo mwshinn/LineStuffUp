@@ -213,7 +213,7 @@ class AffineTransform:
 
     """
     def _transform(self, points):
-        return (points - self.shift) @ self.matrix
+        return points @ self.matrix - self.shift
     def transform_image(self, image, relative=True, labels=False):
         # Optimisation for the case where no image transform needs to be
         # performed.
@@ -279,7 +279,7 @@ class TranslateRotate(AffineTransform,PointTransform):
         demeaned_end = self.points_end - np.mean(self.points_end, axis=0)
         U,S,V = np.linalg.svd(demeaned_start.T @ demeaned_end)
         self.matrix = U@V
-        self.shift = np.mean(self.points_start - self.points_end@np.linalg.inv(self.matrix), axis=0)
+        self.shift = np.mean(self.points_start @ self.matrix - self.points_end, axis=0)
 
 class TranslateRotate2D(AffineTransform,PointTransform):
     def _fit(self):
@@ -288,7 +288,7 @@ class TranslateRotate2D(AffineTransform,PointTransform):
         U,S,V = np.linalg.svd(demeaned_start[:,1:3].T @ demeaned_end[:,1:3])
         corner_matrix = U@V
         self.matrix = np.vstack([[[1, 0, 0]], np.hstack([[[0],[0]], corner_matrix])])
-        self.shift = np.mean(self.points_start - self.points_end@np.linalg.inv(self.matrix), axis=0)
+        self.shift = np.mean(self.points_start @ self.matrix - self.points_end, axis=0)
 
 class Translate(AffineTransform,PointTransform):
     def _fit(self):
@@ -322,7 +322,7 @@ class TranslateRotateFixed(AffineTransform,Transform):
             self.matrix = self.matrix.T
         self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
     def invert(self):
-        newzyx = self.matrix.T @ [self.params["z"], self.params["y"], self.params["x"]]
+        newzyx = [self.params["z"], self.params["y"], self.params["x"]] @ self.matrix.T
         return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], invert=True)
 
 class TranslateRotateRescale2DFixed(AffineTransform,Transform):
@@ -332,7 +332,7 @@ class TranslateRotateRescale2DFixed(AffineTransform,Transform):
         self.matrix = rotation_matrix(self.params["rotate"], 0, 0) @ np.asarray([[1, 0, 0], [0, self.params["scale"], 0], [0, 0, self.params["scale"]]])
         self.shift = np.asarray([0, -self.params["y"], -self.params["x"]])
     def invert(self):
-        newzyx = self.matrix.T @ [0, self.params["y"], self.params["x"]]
+        newzyx = [0, self.params["y"], self.params["x"]] @ self.matrix.T
         return self.__class__(rotate=-self.params["rotate"], y=-newzyx[1], x=-newzyx[2], scale=1/self.params["scale"])
 
 class ShearFixed(AffineTransform,Transform):
@@ -669,7 +669,7 @@ def compose_transforms(a, b):
                     super().__init__(*args, **kwargs, **extra_args)
                 def _fit(self):
                     self.matrix = a.matrix @ self.b.matrix
-                    self.shift = a.shift + self.b.shift @ np.linalg.inv(a.matrix)
+                    self.shift = a.shift @ self.b.matrix + self.b.shift
                 def __repr__(self):
                     return repr(a) + " + " + repr(self.b)
                 @staticmethod
