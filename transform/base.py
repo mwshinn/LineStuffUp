@@ -628,6 +628,21 @@ class DistanceWeightedAverage(PointTransformNoInverse):
         pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
         pos /= baseline[:,None]
         return points + pos
+    def origin_and_maxpos(self, img):
+        """When using relative mode for image transformation, find the corners of the bounds based on the input image size"""
+        # Only slight modifications to the original
+        input_bounds = img.shape
+        origin_offset = img.origin if isinstance(img, ndarray_shifted) else [0,0,0]
+        if input_bounds is not None:
+            corners_pretransform = [[a, b, c] for a in [0, input_bounds[0]] for b in [0, input_bounds[1]] for c in [0, input_bounds[2]]]
+            corners_pretransform = (corners_pretransform) + np.asarray(origin_offset)
+            origin = np.min(np.concatenate([self.transform(corners_pretransform), self.points_end]), axis=0).astype("float32")-1
+            maxpos = np.max(np.concatenate([self.transform(corners_pretransform), self.points_end]), axis=0).astype("float32")+1
+            print("origin", origin, "maxpos", maxpos)
+        else:
+            origin = np.asarray([0, 0, 0], dtype="float32")
+            maxpos = None
+        return origin,maxpos
 
 def compose_transforms(a, b):
     # Special cases for linear and for adding to a class (not yet fitted)
@@ -662,6 +677,8 @@ def compose_transforms(a, b):
                     return a
                 def invert(self):
                     return self.b.invert() + a.invert()
+                def origin_and_maxpos(self, img):
+                    return self.b.__class__.origin_and_maxpos(self, img)
             return ComposedPartialAffine
         else:
             class ComposedPartial(inherit):
@@ -688,6 +705,8 @@ def compose_transforms(a, b):
                 @staticmethod
                 def pretransform(*args, **kwargs):
                     return a
+                def origin_and_maxpos(self, img):
+                    return self.b.__class__.origin_and_maxpos(self, img)
             return ComposedPartial
     raise NotImplementedError("Invalid composition")
 
