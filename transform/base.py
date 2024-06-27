@@ -112,7 +112,7 @@ class Transform:
             origin = np.asarray([0, 0, 0], dtype="float32")
             maxpos = None
         return origin,maxpos
-    def transform_image(self, img, relative=True, labels=False):
+    def transform_image(self, img, relative=True, labels=False, downsample=None):
         """Generic non-rigid transformation for images.
 
         Apply the transformation to image `img`.  `pad` is the number of pixels
@@ -127,15 +127,15 @@ class Transform:
         if img.ndim == 2:
             img = img[None]
         origin, maxpos = self.origin_and_maxpos(img)
+        downsample_output = np.asarray([1, 1, 1], dtype="int") if downsample is None else np.asarray([downsample, downsample, downsample], dtype="int") if isinstance(downsample, np.integer) else np.asarray(downsample, dtype="int")
         if relative is True:
-            shape = np.round(np.ceil(maxpos - origin)).astype(int)
+            shape = np.round(np.ceil(maxpos - origin)/downsample_output).astype(int)
         elif isinstance(relative, tuple):
-            shape = np.asarray([r[1]-r[0] if isinstance(r, tuple) else r for r in relative], dtype="int")
+            shape = np.asarray([r[1]-r[0] if isinstance(r, tuple) else r for r in relative], dtype="int")//downsample_output
             origin = np.asarray([r[0] if isinstance(r, tuple) else 0 for r in relative], dtype="float32")
         else:
             shape = np.asarray(img.shape).astype(int)
             origin = np.zeros(3, dtype="float32")
-        origin_adjust = img.origin if isinstance(img, ndarray_shifted) else np.asarray([0,0,0], dtype="float32")
         if img.shape[0] == 1: # This is a hack to get around thickness=1 images disappearing in the map_coordinates function 
             img = np.concatenate([img, img])
         # First, we construct a list of coordinates of all the pixels in the
@@ -144,19 +144,21 @@ class Transform:
         # mappings.  We turn this matrix of mappings into a matrix of pointers
         # from the destination image to the source image, and then use the
         # map_coordinates function to perform this mapping.
-        meshgrid = np.array(np.meshgrid(np.arange(0, shape[0], dtype="float32"), np.arange(0,shape[1], dtype="float32"), np.arange(0,shape[2], dtype="float32"), indexing="ij"), dtype="float32")
+        meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]*downsample_output[0], downsample_output[0], dtype="float32"), np.arange(0,shape[1]*downsample_output[1], downsample_output[1], dtype="float32"), np.arange(0,shape[2]*downsample_output[2], downsample_output[2], dtype="float32"), indexing="ij"), dtype="float32")
         grid = meshgrid.T.reshape(-1,3)
         del meshgrid
         grid += origin
         mapped_grid = self.inverse_transform(grid)
         del grid
-        mapped_grid -= origin_adjust
+        if isinstance(img, ndarray_shifted): # Adjust for input origin and downsampling
+            mapped_grid -= img.origin
+            mapped_grid *= img.downsample
         displacement = mapped_grid.reshape(*shape[::-1],3).T
         # Prefilter == False speeds it up a lot when going from big images to
         # small images.  Supposedly it makes the output images blurrier though,
         # having't done a comparison yet.
         order = 0 if labels else 3
-        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=-origin) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
+        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=-origin, downsample=downsample_output) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
@@ -214,17 +216,18 @@ class AffineTransform:
     """
     def _transform(self, points):
         return points @ self.matrix - self.shift
-    def transform_image(self, image, relative=True, labels=False):
+    def transform_image(self, image, relative=True, labels=False, downsample=None):
         # Optimisation for the case where no image transform needs to be
         # performed.
         if np.all(self.matrix == np.eye(3)):
             if relative is True:
-                return ndarray_shifted(image, origin=self.shift)
+                downsample = downsample if downsample is not None else [1,1,1]
+                return ndarray_shifted(image[::downsample[0],::downsample[1],::downsample[2]], origin=self.shift)
             # else:
             #     newimg = np.zeros_like(image)
             #     blit(image, newimg, self.shift) # TODO test, not sure if this works
             #     return newimg
-        return super().transform_image(image, relative=relative, labels=labels)
+        return super().transform_image(image, relative=relative, labels=labels, downsample=downsample)
     def invert(self):
         """Invert the transform.
 
@@ -371,9 +374,9 @@ class Identity(AffineTransform,Transform):
         return points
     def invert(self):
         return self.__class__()
-    def transform_image(self, image, relative=True, labels=False):
+    def transform_image(self, image, relative=True, labels=False, downsample=None):
         """More efficient implementation of image transformation"""
-        # TODO This doesn't work for relative mode
+        # TODO This doesn't work for relative mode or downsample
         return image
 
 class Rescale(AffineTransform,Transform):

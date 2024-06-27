@@ -27,14 +27,14 @@ class GraphViewer(napari.Viewer):
         if self.space is not None and space is not None and self.space != space:
             data = self.graph.get_transform(space, self.space).transform_image(data, labels=labels)
         origin = data.origin if isinstance(data, ndarray_shifted) else np.zeros_like(data.shape)
-        return data, origin, name
+        downsample = data.downsample if isinstance(data, ndarray_shifted) else np.ones_like(data.shape)
+        return data, origin, downsample, name
     def add_image(self, data, space=None, **kwargs):
-        data, origin, name = self._get_data_origin_name(data, space)
-        return super().add_image(data, translate=-origin, name=name, **kwargs)
+        data, origin, downsample, name = self._get_data_origin_name(data, space)
+        return super().add_image(data, translate=-origin, name=name, scale=downsample, **kwargs)
     def add_labels(self, data, space=None, **kwargs):
-        data, origin, name = self._get_data_origin_name(data, space, labels=True)
-        print(data)
-        return super().add_labels(data, translate=-origin, name=name, **kwargs)
+        data, origin, downsample, name = self._get_data_origin_name(data, space, labels=True)
+        return super().add_labels(data, translate=-origin, name=name, scale=downsample, **kwargs)
     def add_points(self, data, space=None, **kwargs):
         if space is not None and self.space is not None:
             data = self.graph.get_transform(space, self.space).transform(data)
@@ -78,7 +78,7 @@ def plot_from_graph(g, ims, output_space=None):
         references = els[1:]
     alignment_gui(els[0][0], base_image, els[0][1], references=references)
 
-def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, references=[]):
+def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, downsample=None, references=[]):
     """Align images
 
     If `base_image` and/or `movable_image` are tuples, they will be interpreted
@@ -114,9 +114,9 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
     base_points = [] if initial_base_points is None else list(initial_base_points)
     movable_points = [] if initial_movable_points is None else list(initial_movable_points)
     tform_type = transform_type
-    layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(-bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])) for bi in base_image]
-    layers_movable = [v.add_image(tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi)), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi)[0]) for mi in movable_image]
-    layers_reference = [v.add_image(rt.transform_image(ri, relative=True, labels=utils.image_is_label(ri)), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri)[0]) for i,(ri,rt) in enumerate(references)]
+    layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(-bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0]), scale=(bi.downsample if isinstance(bi, ndarray_shifted) else [1, 1, 1])) for bi in base_image]
+    layers_movable = [v.add_image(tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi), downsample=downsample), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi)[0], scale=downsample) for mi in movable_image]
+    layers_reference = [v.add_image(rt.transform_image(ri, relative=True, labels=utils.image_is_label(ri), downsample=downsample), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri)[0], scale=downsample) for i,(ri,rt) in enumerate(references)]
     if is_point_transform:
         layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
         layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, 1, .6, 1])
@@ -238,7 +238,7 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
             print("prev matrix", _prev_matrix, tform)
             if _prev_matrix is None or (not isinstance(tform, AffineTransform)) or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
                 print("Updated")
-                layer_movable.data = tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi))
+                layer_movable.data = tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi), downsample=downsample)
             layer_movable.translate = tform.origin_and_maxpos(mi)[0]
             layer_movable.refresh()
         if isinstance(tform, AffineTransform):

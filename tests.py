@@ -79,7 +79,7 @@ for t in ALL_TRANSFORMS:
 # Test for exact answers for some transforms
 assert close(TranslateFixed(z=5, y=4, x=7).transform(points_pre), points_pre+[5,4,7])
 assert close(Identity().transform(points_pre), points_pre)
-assert close(TranslateRotateFixed(z=3, y=8, x=-3, zrotate=8, yrotate=-9, xrotate=2).transform(points_pre), (points_pre+[3,8,-3])@rotation_matrix(8,-9,2))
+assert close(TranslateRotateFixed(z=3, y=8, x=-3, zrotate=8, yrotate=-9, xrotate=2).transform(points_pre), points_pre@rotation_matrix(8,-9,2)+[3,8,-3])
 assert close(Translate(points_pre, points_pre+[5,4,3]).transform(points_pre), points_pre+[5,4,3])
 assert close(TranslateRotate(points_pre, (points_pre+[-4,2,1])@rotation_matrix(6,1,-3)).transform(points_pre), (points_pre+[-4,2,1])@rotation_matrix(6,1,-3))
 assert close(TranslateRotate2D(points_pre, (points_pre+[0,2,1])@rotation_matrix(30,0,0)).transform(points_pre), (points_pre+[0,2,1])@rotation_matrix(30,0,0))
