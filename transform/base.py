@@ -111,7 +111,6 @@ class Transform:
             else:
                 origin = np.min(self.transform(corners_pretransform), axis=0).astype("float32")
                 maxpos = np.max(self.transform(corners_pretransform), axis=0).astype("float32")
-            print("origin", origin, "maxpos", maxpos)
         else:
             origin = np.asarray([0, 0, 0], dtype="float32")
             maxpos = None
@@ -134,10 +133,12 @@ class Transform:
         downsample_output = np.asarray([1, 1, 1], dtype="int") if downsample is None else np.asarray([downsample, downsample, downsample], dtype="int") if isinstance(downsample, np.integer) else np.asarray(downsample, dtype="int")
         if relative is True:
             shape = np.round(np.ceil(maxpos - origin)/downsample_output).astype(int)
-            starting_pos = np.asarray([0, 0, 0])
-        elif isinstance(relative, tuple): # TODO can optimize further: use the intersection of the output space and the input bounds
-            shape = np.asarray([r[1]-r[0] if isinstance(r, tuple) else r for r in relative], dtype="int")//downsample_output
-            starting_pos = np.asarray([r[0] if isinstance(r, tuple) else 0 for r in relative], dtype="float32")
+        elif isinstance(relative, tuple):
+            maxpos_ = np.asarray([r[1] if isinstance(r, tuple) else r for r in relative])
+            origin_ = np.asarray([r[0] if isinstance(r, tuple) else 0 for r in relative], dtype="float32")
+            origin = np.max([origin_, origin], axis=0)
+            box_kittycorner = np.min([maxpos_, maxpos], axis=0)
+            shape = (box_kittycorner - origin).astype(int)//downsample_output
         else:
             shape = np.asarray(img.shape).astype(int)
             origin = np.zeros(3, dtype="float32")
@@ -152,18 +153,18 @@ class Transform:
         meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]*downsample_output[0], downsample_output[0], dtype="float32"), np.arange(0,shape[1]*downsample_output[1], downsample_output[1], dtype="float32"), np.arange(0,shape[2]*downsample_output[2], downsample_output[2], dtype="float32"), indexing="ij"), dtype="float32")
         grid = meshgrid.T.reshape(-1,3)
         del meshgrid
-        grid += origin + starting_pos
+        grid += origin
         mapped_grid = self.inverse_transform(grid)
         del grid
         if isinstance(img, ndarray_shifted): # Adjust for input origin and downsampling
-            mapped_grid -= img.origin
+            mapped_grid += img.origin
             mapped_grid *= img.downsample
         displacement = mapped_grid.reshape(*shape[::-1],3).T
         # Prefilter == False speeds it up a lot when going from big images to
         # small images.  Supposedly it makes the output images blurrier though,
         # having't done a comparison yet.
         order = 0 if labels else 3
-        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=-origin+starting_pos, downsample=downsample_output) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
+        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=origin, downsample=downsample_output) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
@@ -227,7 +228,7 @@ class AffineTransform:
         if np.all(self.matrix == np.eye(3)):
             if relative is True:
                 downsample = downsample if downsample is not None else [1,1,1]
-                return ndarray_shifted(image[::downsample[0],::downsample[1],::downsample[2]], origin=self.shift)
+                return ndarray_shifted(image[::downsample[0],::downsample[1],::downsample[2]], origin=-self.shift)
             # else:
             #     newimg = np.zeros_like(image)
             #     blit(image, newimg, self.shift) # TODO test, not sure if this works
@@ -554,7 +555,6 @@ class Triangulation2D(PointTransform):
                 _end = np.concatenate([end[simp], end[[simp[0]]]+self.normal], axis=0)
                 coefs_rhs = np.concatenate([_start, np.ones(len(simp)+1)[:,None]], axis=1)
                 coefs_lhs = _end
-                print("shapes2", coefs_lhs.shape, coefs_rhs.shape, insimp.shape, start.shape, end.shape, points.shape)
                 params = np.linalg.inv(coefs_rhs) @ coefs_lhs
                 newpoints[insimp==i] = np.concatenate([points[insimp==i], np.ones(np.sum(insimp==i))[:,None]], axis=1) @ params
             assert not np.any(np.isnan(newpoints)), "Not sure why this should ever happen?"

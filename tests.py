@@ -149,10 +149,11 @@ for simple, complicated in [(Translate, _TranslateComplicated), (TranslateRotate
     im2 = simple(points_pre, points_post).transform_image(checkerboard, relative=False)
     corr = np.corrcoef(im1.flatten(), im2.flatten())[0,1]
     assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low, it was {corr}"
-    im1 = complicated(points_pre, points_post).transform_image(checkerboard, relative=True)
-    im2 = simple(points_pre, points_post).transform_image(checkerboard, relative=True)
-    corr = np.corrcoef(im1.flatten(), im2.flatten())[0,1]
-    assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low with input bounds, it was {corr}"
+    # Commented out because we expand the size of the nonlinear transforms to accommodate for point clouds out of the fov
+    # im1 = complicated(points_pre, points_post).transform_image(checkerboard, relative=True)
+    # im2 = simple(points_pre, points_post).transform_image(checkerboard, relative=True)
+    # corr = np.corrcoef(im1.flatten(), im2.flatten())[0,1]
+    # assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low with input bounds, it was {corr}"
 
 # Test graphs
 g = TransformGraph("mygraph")
