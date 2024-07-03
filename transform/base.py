@@ -82,7 +82,6 @@ class Transform:
             is_1d = True
         if 0 in points.shape: # If any dimensions don't exist, no points to transform
             return points
-        print(points.shape)
         assert points.shape[1] == 3, "Input points must be in volume space"
         if is_1d:
             return self._transform(points)[0]
@@ -105,9 +104,14 @@ class Transform:
         origin_offset = img.origin if isinstance(img, ndarray_shifted) else [0,0,0]
         if input_bounds is not None:
             corners_pretransform = [[a, b, c] for a in [0, input_bounds[0]] for b in [0, input_bounds[1]] for c in [0, input_bounds[2]]]
-            corners_pretransform = corners_pretransform + np.asarray(origin_offset)
-            origin = np.min(self.transform(corners_pretransform), axis=0).astype("float32")
-            maxpos = np.max(self.transform(corners_pretransform), axis=0).astype("float32")
+            corners_pretransform = (corners_pretransform) + np.asarray(origin_offset)
+            if isinstance(self, PointTransform): # For nonlinear transforms a box is not enough.  This is also not enough but it is better than nothing.
+                origin = np.min(np.concatenate([self.transform(corners_pretransform), self.points_end]), axis=0).astype("float32")
+                maxpos = np.max(np.concatenate([self.transform(corners_pretransform), self.points_end]), axis=0).astype("float32")
+            else:
+                origin = np.min(self.transform(corners_pretransform), axis=0).astype("float32")
+                maxpos = np.max(self.transform(corners_pretransform), axis=0).astype("float32")
+            print("origin", origin, "maxpos", maxpos)
         else:
             origin = np.asarray([0, 0, 0], dtype="float32")
             maxpos = None
@@ -130,9 +134,10 @@ class Transform:
         downsample_output = np.asarray([1, 1, 1], dtype="int") if downsample is None else np.asarray([downsample, downsample, downsample], dtype="int") if isinstance(downsample, np.integer) else np.asarray(downsample, dtype="int")
         if relative is True:
             shape = np.round(np.ceil(maxpos - origin)/downsample_output).astype(int)
-        elif isinstance(relative, tuple):
+            starting_pos = np.asarray([0, 0, 0])
+        elif isinstance(relative, tuple): # TODO can optimize further: use the intersection of the output space and the input bounds
             shape = np.asarray([r[1]-r[0] if isinstance(r, tuple) else r for r in relative], dtype="int")//downsample_output
-            origin = np.asarray([r[0] if isinstance(r, tuple) else 0 for r in relative], dtype="float32")
+            starting_pos = np.asarray([r[0] if isinstance(r, tuple) else 0 for r in relative], dtype="float32")
         else:
             shape = np.asarray(img.shape).astype(int)
             origin = np.zeros(3, dtype="float32")
@@ -147,7 +152,7 @@ class Transform:
         meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]*downsample_output[0], downsample_output[0], dtype="float32"), np.arange(0,shape[1]*downsample_output[1], downsample_output[1], dtype="float32"), np.arange(0,shape[2]*downsample_output[2], downsample_output[2], dtype="float32"), indexing="ij"), dtype="float32")
         grid = meshgrid.T.reshape(-1,3)
         del meshgrid
-        grid += origin
+        grid += origin + starting_pos
         mapped_grid = self.inverse_transform(grid)
         del grid
         if isinstance(img, ndarray_shifted): # Adjust for input origin and downsampling
@@ -158,7 +163,7 @@ class Transform:
         # small images.  Supposedly it makes the output images blurrier though,
         # having't done a comparison yet.
         order = 0 if labels else 3
-        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=-origin, downsample=downsample_output) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
+        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=-origin+starting_pos, downsample=downsample_output) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
@@ -271,6 +276,8 @@ class PointTransformNoInverse(PointTransform):
             res = self._transform(points, points_start=self.points_start, points_end=self.points_end)
         else:
             print("Slow transform of", points.shape)
+            if points.shape[0] > 1000:
+                raise ValueError("Too many points to invert, this will take forever.")
             res = np.asarray([self._inv_transform_cache[tuple(p)] if tuple(p) in self._inv_transform_cache.keys() else invert_function_numerical(lambda x,self=self : self._transform(x, self.points_end, self.points_start), p) for p in points])
         return res[0] if is_1d else res
     def invert(self):
@@ -404,7 +411,7 @@ class Triangulation(PointTransform):
         # angles for near-coplannar point clouds, we shift the points in all
         # dimensions by a small value first.  We assign these points a simple
         # linear transformed version of the points they are derived from.
-        SCALE_FACTOR = 100
+        SCALE_FACTOR = 1000
         if self.params["invert"]:
             before = self.points_end
             after = self.points_start
@@ -556,6 +563,7 @@ class Triangulation2D(PointTransform):
         return self.__class__(invert=(not self.params["invert"]), points_start=self.points_end, points_end=self.points_start)
 
 
+# This doesn't work very well
 class DistanceWeightedAverageGaussian(PointTransformNoInverse):
     DEFAULT_PARAMETERS = {"extent": 1, "invert": False}
     def _transform(self, points, points_start, points_end):
@@ -571,23 +579,6 @@ class DistanceWeightedAverageGaussian(PointTransformNoInverse):
         pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
         pos /= (baseline[:,None] + epsilon)
         return points + pos
-
-# class DistanceWeightedAverage(PointTransformNoInverse):
-#     def _transform(self, points, points_start, points_end):
-#         #_t = time.time()
-#         points = np.asarray(points, dtype="float")
-#         baseline = np.zeros_like(points[:,0])
-#         pos = np.zeros_like(points)
-#         epsilon = 1e-200 # For numerical stability
-#         for i in range(0, len(points_start)):
-#             dist = 1/(np.sum(np.square(points-points_start[i]), axis=1)+epsilon)
-#             baseline += dist
-#             for j in range(0, 3):
-#                 pos[:,j] += dist*(points_end[i][j]-points_start[i][j])
-#         pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
-#         pos /= baseline[:,None]
-#         #print("Time:", time.time()-_t)
-#         return points + pos
 
 import numba
 class DistanceWeightedAverage(PointTransformNoInverse):
@@ -605,9 +596,9 @@ class DistanceWeightedAverage(PointTransformNoInverse):
                 pos[:,j] += dist*(points_end[i][j]-points_start[i][j])
         return pos,baseline
     def _transform(self, points, points_start, points_end):
-        #if points.shape[0] > 20:
-        #    print("Array transform")
-        #    return self._transform_array(points, points_start, points_end)
+        if points.shape[0] > 20:
+            print("Array transform")
+            return self._transform_array(points, points_start, points_end)
         #_t = time.time()
         points = np.asarray(points, dtype="float")
         baseline = np.zeros_like(points[:,0])
@@ -631,21 +622,6 @@ class DistanceWeightedAverage(PointTransformNoInverse):
         pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
         pos /= baseline[:,None]
         return points + pos
-    def origin_and_maxpos(self, img):
-        """When using relative mode for image transformation, find the corners of the bounds based on the input image size"""
-        # Only slight modifications to the original
-        input_bounds = img.shape
-        origin_offset = img.origin if isinstance(img, ndarray_shifted) else [0,0,0]
-        if input_bounds is not None:
-            corners_pretransform = [[a, b, c] for a in [0, input_bounds[0]] for b in [0, input_bounds[1]] for c in [0, input_bounds[2]]]
-            corners_pretransform = (corners_pretransform) + np.asarray(origin_offset)
-            origin = np.min(np.concatenate([self.transform(corners_pretransform), self.points_end]), axis=0).astype("float32")-1
-            maxpos = np.max(np.concatenate([self.transform(corners_pretransform), self.points_end]), axis=0).astype("float32")+1
-            print("origin", origin, "maxpos", maxpos)
-        else:
-            origin = np.asarray([0, 0, 0], dtype="float32")
-            maxpos = None
-        return origin,maxpos
 
 def compose_transforms(a, b):
     # Special cases for linear and for adding to a class (not yet fitted)
@@ -680,8 +656,6 @@ def compose_transforms(a, b):
                     return a
                 def invert(self):
                     return self.b.invert() + a.invert()
-                def origin_and_maxpos(self, img):
-                    return self.b.__class__.origin_and_maxpos(self, img)
             return ComposedPartialAffine
         else:
             class ComposedPartial(inherit):
@@ -708,8 +682,6 @@ def compose_transforms(a, b):
                 @staticmethod
                 def pretransform(*args, **kwargs):
                     return a
-                def origin_and_maxpos(self, img):
-                    return self.b.__class__.origin_and_maxpos(self, img)
             return ComposedPartial
     raise NotImplementedError("Invalid composition")
 

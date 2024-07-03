@@ -6,18 +6,20 @@ import numpy as np
 _FIXED_TRANSFORMS = [TranslateRotateFixed, TranslateRotateFixed, TranslateFixed, Identity, Rescale, ShearFixed]
 _FIXED_TRANSFORMS_PARAMS = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=10, xrotate=20), dict(z=3.2, y=0, x=-24, zrotate=3.4, yrotate=10, xrotate=25), dict(z=-10, y=.3, x=4), dict(), dict(z=2, y=4, x=3), dict(yzshear=.3, xzshear=-.2, xyshear=.1)]
 FIXED_TRANSFORMS = [t(**tp) for t,tp in zip(_FIXED_TRANSFORMS, _FIXED_TRANSFORMS_PARAMS)]
-_POINT_TRANSFORMS = [TranslateRotate, Translate, TranslateRotate2D]#, DistanceWeightedAverage, DistanceWeightedAverageGaussian, Triangulation]
+_POINT_TRANSFORMS = [TranslateRotate, Translate, TranslateRotate2D, Triangulation]
+_POINT_TRANSFORMS_SLOW = [DistanceWeightedAverage]
 points_pre = np.random.randn(50,3)
 points_post = points_pre@rotation_matrix(4,6,2)-9
 POINT_TRANSFORMS = [t(points_pre, points_post) for t in _POINT_TRANSFORMS]
+POINT_TRANSFORMS_SLOW = [t(points_pre, points_post) for t in _POINT_TRANSFORMS_SLOW]
 
 ALL_TRANSFORMS = FIXED_TRANSFORMS + POINT_TRANSFORMS
 
 close = lambda x,y : np.allclose(x, y, atol=1e-3, rtol=1e-3)
 
 # Testing all transforms
-new_points = np.random.randn(100,3).astype("float32")
-for t in ALL_TRANSFORMS:
+new_points = np.random.randn(10,3).astype("float32")
+for t in ALL_TRANSFORMS + POINT_TRANSFORMS_SLOW:
     assert close(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} can not be inverted"
 
 # Invert all transforms
@@ -30,17 +32,29 @@ for t1 in ALL_TRANSFORMS:
         t = t1 + t2
         assert close(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} can not be inverted"
 
+# Test double compositions
+for t1 in ALL_TRANSFORMS[0:2]:
+    for t2 in ALL_TRANSFORMS:
+        for t3 in ALL_TRANSFORMS + POINT_TRANSFORMS_SLOW:
+            t = t1 + t2 + t3
+            assert close(t.inverse_transform(t.transform(new_points)), new_points), f"Transform {t} can not be inverted"
+
 # Invert all compositions of transforms
-for t1 in ALL_TRANSFORMS:
+for t1 in ALL_TRANSFORMS + POINT_TRANSFORMS_SLOW:
     for t2 in ALL_TRANSFORMS:
         t = t1 + t2
         assert close(t.transform(t.invert().transform(new_points)), new_points), f"Error with inverse of transform {t}"
 
 # Test all compositions for compositionality
 for t1 in ALL_TRANSFORMS:
-    for t2 in ALL_TRANSFORMS:
+    for t2 in ALL_TRANSFORMS + POINT_TRANSFORMS_SLOW:
         t = t1 + t2
         assert close(t2.transform(t1.transform(new_points)), t.transform(new_points)), f"Transform {t} did not compose"
+
+# DistanceWeightedAverage has different behaviour for <20 points.
+new_points_big = np.random.randn(30,3).astype("float32")
+for t in POINT_TRANSFORMS_SLOW:
+    assert np.all(t.invert().transform(new_points_big)[0:5] == t.invert().transform(new_points_big[0:5]))
 
 
 # Test partial compositions for inversion identity
@@ -69,7 +83,7 @@ for t1 in ALL_TRANSFORMS:
 checkerboard = np.asarray([[[float(((i//10) + (j//10) + (k//10)) % 2) for i in range(0, 150)] for j in range(0, 300)] for k in range(0, 30)])
 
 # Test compositions when transforming images
-for t in ALL_TRANSFORMS:
+for t in ALL_TRANSFORMS + POINT_TRANSFORMS_SLOW:
     image_transformed_once = t.transform_image(checkerboard, relative=False)
     image_transformed_twice = t.transform_image(image_transformed_once, relative=False)
     image_transformed_sum = (t+t).transform_image(checkerboard, relative=False)
@@ -94,13 +108,15 @@ _FIXED_TRANSFORMS_SPOT = [TranslateRotateFixed, TranslateFixed, Identity]
 _FIXED_TRANSFORMS_PARAMS_SPOT = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=5, xrotate=10), dict(z=-10, y=.3, x=4), dict()]
 FIXED_TRANSFORMS_SPOT = [t(**tp) for t,tp in zip(_FIXED_TRANSFORMS_SPOT, _FIXED_TRANSFORMS_PARAMS_SPOT)]
 _POINT_TRANSFORMS_SPOT = [TranslateRotate2D, Translate, TranslateRotate]
+_POINT_TRANSFORMS_SPOT_SLOW = [Triangulation, DistanceWeightedAverage]
 points_pre = np.random.randn(100,3)+50
 points_post = (points_pre@rotation_matrix(1,2,3))-9
 POINT_TRANSFORMS_SPOT = [t(points_pre, points_post) for t in _POINT_TRANSFORMS_SPOT]
+POINT_TRANSFORMS_SPOT_SLOW = [t(points_pre, points_post) for t in _POINT_TRANSFORMS_SPOT_SLOW]
 ALL_TRANSFORMS_SPOT = FIXED_TRANSFORMS_SPOT + POINT_TRANSFORMS_SPOT
 
 # Test image transformations in absolute and relative coordinates
-for t in ALL_TRANSFORMS_SPOT:
+for t in ALL_TRANSFORMS_SPOT + POINT_TRANSFORMS_SPOT_SLOW:
     spot_rel = np.mean(np.where(t.transform_image(spot, relative=True)>.1), axis=1)
     assert np.max(spot_rel - (t.transform([spotpos]) - t.origin_and_maxpos(spot)[0])) < 1
     spot_abs = np.mean(np.where(t.transform_image(spot, relative=False)>.1), axis=1)
