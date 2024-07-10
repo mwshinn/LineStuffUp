@@ -237,9 +237,10 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
         elif is_point_transform:
             if movable_points is not None and len(movable_points) > 0:
                 tform = tform_type(points_start=movable_points, points_end=base_points, **params)
+                layer_movable_points.data = tform.transform(pretransform.inverse_transform(movable_points))
             else:
                 tform = pretransform
-            layer_movable_points.data = tform.transform(pretransform.inverse_transform(movable_points))
+                layer_movable_points.data = np.asarray([])
             layer_movable_points.refresh()
         else:
             tform = tform_type(**params)
