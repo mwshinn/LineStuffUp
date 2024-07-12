@@ -144,6 +144,10 @@ class Transform:
             origin = np.zeros(3, dtype="float32")
         if img.shape[0] == 1: # This is a hack to get around thickness=1 images disappearing in the map_coordinates function 
             img = np.concatenate([img, img])
+        if img.shape[1] == 1:
+            img = img*np.ones((1,2,1))
+        if img.shape[2] == 1:
+            img = img*np.ones((1,1,2))
         # First, we construct a list of coordinates of all the pixels in the
         # image, and transform them to find out which point is mapped to which
         # other point.  Then, we inverse transform them to construct a matrix of
@@ -292,6 +296,14 @@ class TranslateRotate(AffineTransform,PointTransform):
         self.matrix = U@V
         self.shift = np.mean(self.points_start @ self.matrix - self.points_end, axis=0)
 
+class TranslateRotateRescale(AffineTransform,PointTransform): # TODO untested inverse
+    DEFAULT_PARAMETERS = {"normal_z": 0.0, "normal_y": 0.0, "normal_x": 0.0}
+    def _fit(self):
+        demeaned_start = self.points_start - np.mean(self.points_start, axis=0)
+        demeaned_end = self.points_end - np.mean(self.points_end, axis=0)
+        self.matrix = np.linalg.inv(demeaned_start.T @ demeaned_end) @ demeaned_start.T @ demeaned_end
+        self.shift = np.mean(self.points_start@matrix - sefl.points_end, axis=0)
+
 class TranslateRotate2D(AffineTransform,PointTransform):
     def _fit(self):
         demeaned_start = self.points_start - np.mean(self.points_start, axis=0)
@@ -355,24 +367,6 @@ class ShearFixed(AffineTransform,Transform):
         return self.__class__(yzshear=-self.params["yzshear"], xzshear=self.params["xyshear"]*self.params["yzshear"]-self.params["xzshear"], xyshear=-self.params["xyshear"])
 
 Shear = ShearFixed
-# class TranslateRotateRescaleUniform2D(AffineTransform,PointTransform):
-#     def _fit(self):
-#         """Too many parameters for the normal fitting routine"""
-#         if self.points_start.shape[0] == 0:
-#             self.shift = np.zeros(3)
-#             self.matrix = np.zeros(len(self.DEFAULT_PARAMS))
-#             return
-#         starting_transform = TranslateRotate2D(self.points_start, self.points_end)
-#         starting_params = list(starting_transform.shift) + list(starting_transform.matrix) + [1]
-#         print(starting_transform, starting_params)
-#         # First three args are shift, rest of args are for transformation matrix
-#         def obj_func(params):
-#             return np.sum(np.square(self.points_end - (self.points_start - [0, params[0], params[1]]) @ self._matrix(params[2:])))
-#         self.optimize_result = scipy.optimize.minimize(obj_func, starting_params)
-#         self.shift = np.concatenate([[0], self.optimize_result.x[0:2]])
-#         self.matrix = self._matrix(self.optimize_result.x[2:])
-#     def _matrix(self, params):
-#         return rotation_matrix(params[0], 0, 0) @ np.diag([1, params[1], params[1]])
 
 class Identity(AffineTransform,Transform):
     def _fit(self):

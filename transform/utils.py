@@ -4,7 +4,15 @@ import io
 import scipy.stats
 import zlib
 import imageio.plugins.ffmpeg # If this fails, install the imageio-ffmpeg package with pip
+import skimage
+import skimage.registration
 from .ndarray_shifted import ndarray_shifted
+
+try: # Work around skimage bug in some versions
+    phase_correlation = lambda x,y : skimage.registration.phase_cross_correlation(x, y, normalization=None)
+    phase_correlation(np.asarray([1]), np.asarray([1]))
+except TypeError:
+    phase_correlation = lambda x,y : skimage.registration.phase_cross_correlation(x, y)
 
 def apply_transform_to_2D_colour_image(image_filename, transform, flip=False):
     im = imageio.imread(image_filename).transpose(2,0,1)
