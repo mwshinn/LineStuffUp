@@ -62,6 +62,37 @@ def bake_images(im_fixed, im_movable, transform):
     blit(im_movable, im, tuple(origin.astype(int)-new_dims_min))
     return ndarray_shifted(im, origin=new_dims_min)
 
+def absolute_coords_to_voxel_coords(img, coords):
+    if not isinstance(img, ndimage_shifted):
+        img = ndarray_shifted(img)
+    return np.round((coords - img.origin)/img.downsample).astype(int)
+
+def voxel_coords_to_absolute_coords(img, coords):
+    if not isinstance(img, ndimage_shifted):
+        img = ndarray_shifted(img)
+    return coords * img.downsample + img.origin
+
+def crop_to_intersection(img1, img2):
+    # TODO DOes not yet work with downsampling
+    if not isinstance(img1, ndarray_shifted):
+        img1 = ndarray_shifted(img1)
+    if not isinstance(img2, ndarray_shifted):
+        img2 = ndarray_shifted(img2)
+    absolute_coords_to_voxel_coords = lambda img,coords: np.round((coords - img.origin)/img.downsample).astype(int)
+    voxel_coords_to_absolute_coords = lambda img,coords: coords * img.downsample + img.origin
+    origin = np.max([img1.origin, img2.origin], axis=0)
+    maxpos = np.min([voxel_coords_to_absolute_coords(img1, img1.shape), voxel_coords_to_absolute_coords(img2, img2.shape)], axis=0)
+    output_img = np.zeros(img1.shape)
+    i1 = absolute_coords_to_voxel_coords(img1, origin)
+    i2 = absolute_coords_to_voxel_coords(img1, maxpos)
+    img1_crop = np.array(img1)[i1[0]:i2[0],i1[1]:i2[1],i1[2]:i2[2]]
+    i1 = absolute_coords_to_voxel_coords(img2, origin)
+    i2 = absolute_coords_to_voxel_coords(img2, maxpos)
+    img2_crop = np.array(img2)[i1[0]:i2[0],i1[1]:i2[1],i1[2]:i2[2]]
+    return ndarray_shifted(img1_crop, origin), ndarray_shifted(img2_crop, origin)
+
+    
+
 def load_image(fn, channel=None):
     img = imageio.imread(fn)
     if channel is None:

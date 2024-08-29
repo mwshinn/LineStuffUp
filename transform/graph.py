@@ -2,6 +2,8 @@ from . import base as transform
 import numpy as np
 from . import ndarray_shifted as ndarray_shifted
 from . import utils
+import os
+import tempfile
 
 class TransformGraph:
     def __init__(self, name):
@@ -172,7 +174,10 @@ class TransformGraph:
             else:
                 self.node_images[node] = utils.decompress_image(*self.compressed_node_images[node])
         return self.node_images[node]
-    def visualise(self, filename):
+    def visualise(self, filename=None, nearby=None):
+        fn = filename
+        if fn is None:
+            fn = tempfile.mkstemp()[1]
         try:
             import graphviz
         except ImportError:
@@ -180,9 +185,13 @@ class TransformGraph:
         g = graphviz.Digraph(self.name, filename=filename)
         for e1 in self.edges.keys():
             for e2 in self.edges[e1].keys():
+                if nearby is not None and e1 != nearby and e2 != nearby:
+                    continue
                 if e1 in self.edges[e2].keys() and self.edges[e1][e2].__class__.__name__ == self.edges[e2][e1].__class__.__name__:
                     if e1 > e2:
                         g.edge(e1, e2, label=self.edges[e1][e2].__class__.__name__, dir="both")
                 else:
                     g.edge(e1, e2, label=self.edges[e1][e2].__class__.__name__)
         g.view()
+        if filename is None: # Temporary file
+            os.unlink(fn)
