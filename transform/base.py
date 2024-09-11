@@ -491,7 +491,7 @@ class Triangulation2D(PointTransform):
         # Find two vectors to form the basis for the plane.  Suffix "B" to indicate we are in this basis
         self.normal = np.asarray([self.params["normal_z"], self.params["normal_y"], self.params["normal_x"]])
         self.normal /= np.sqrt(np.sum(np.square(self.normal)))
-        vec1 = np.asarray([1., 0, 0]) if np.asarray([1., 0, 0]) @ self.normal < .99 else np.asarray([0, 1., 0]) # Can be any vector, these are a bit easier to interpret
+        vec1 = np.asarray([1., 0, 0]) if np.asarray([1., 0, 0]) @ self.normal < .99 else np.asarray([0, 1., 0]) # Can be any vector in a different direction than the normal, these are a bit easier to interpret
         vec1 -= (vec1 @ self.normal) * self.normal
         vec1 /= np.sqrt(np.sum(np.square(vec1)))
         self.B = np.asarray([vec1, np.cross(self.normal, vec1)]).T
@@ -545,6 +545,9 @@ class Triangulation2D(PointTransform):
             newpoints = np.zeros_like(points)*np.nan
             for i,simp in enumerate(delaunay.simplices):
                 if np.sum(insimp==i) == 0: continue
+                # Perform linear regression to get a map from the start to the
+                # end.  Add an extra point with the normal added so we get a
+                # 3D-to-3D map.
                 _start = np.concatenate([start[simp], start[[simp[0]]]+self.normal], axis=0)
                 _end = np.concatenate([end[simp], end[[simp[0]]]+self.normal], axis=0)
                 coefs_rhs = np.concatenate([_start, np.ones(len(simp)+1)[:,None]], axis=1)
@@ -554,7 +557,7 @@ class Triangulation2D(PointTransform):
             assert not np.any(np.isnan(newpoints)), "Not sure why this should ever happen?"
             return newpoints
     def invert(self):
-        return self.__class__(invert=(not self.params["invert"]), points_start=self.points_end, points_end=self.points_start)
+        return self.__class__(invert=(not self.params["invert"]), points_start=self.points_end, points_end=self.points_start, normal_z=self.params["normal_z"], normal_y=self.params["normal_y"], normal_x=self.params["normal_x"])
 
 
 # This doesn't work very well
@@ -576,6 +579,24 @@ class DistanceWeightedAverageGaussian(PointTransformNoInverse):
 
 import numba
 class DistanceWeightedAverage(PointTransformNoInverse):
+    """Implements a weighted average according to inverse sequare distance.
+
+    The code here is highly optimised for speed, and is really hard to decipher.
+    The equation is:
+
+        \sum_i v_i/w_i + \epsilon \bar{v}
+        -----------------------------------
+                     w_i
+
+    where w_i = 1/(d_i^2 + \epsilon), d is the distance of the test point to the
+    point i, and v_i is the end minus the start for point pair i, where \bar{v}
+    is the mean across all points.
+
+    I think it might be a bug to have the epsilon multiplied by \bar{v} (this
+    makes it essentially always zero), and instead I actually want the same term
+    in the denominator as well, but it works so who cares.
+
+    """
     DEFAULT_PARAMETERS = {"invert": False}
     @staticmethod
     @numba.jit(nopython=True, parallel=True)

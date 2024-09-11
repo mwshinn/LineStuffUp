@@ -200,7 +200,6 @@ def compress_image(img, level="normal"):
             imageio.v3.imwrite(pseudofile, im, format_hint=".jpeg", quality=quality)
             files.append(np.frombuffer(pseudofile.getvalue(), dtype=np.uint8))
         lens = list(map(len, files))
-        print(lens, maxes, mins)
         info = np.concatenate(list(zip(lens, maxes, mins)))
         kind = [2, transform_id, quality]+info.tolist()
         return np.concatenate(files), kind
@@ -224,7 +223,6 @@ def decompress_image(data, kind):
         lens = np.asarray(kind[3::3]).astype(int)
         maxes = kind[4::3]
         mins = kind[5::3]
-        print(maxes, mins)
         ibase = 0
         ims = []
         for i,l in enumerate(lens):
