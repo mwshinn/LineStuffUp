@@ -90,7 +90,7 @@ def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=Tru
         transform_type = g.get_transform(movable[0], base[0])
     elif add_transform:
         transform_type = g.get_transform(movable[0], base[0]) + transform_type
-    alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type)
+    return alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type)
 
 def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, downsample=None, references=[]):
     """Align images
