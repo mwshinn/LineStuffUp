@@ -115,7 +115,7 @@ class Transform:
             origin = np.asarray([0, 0, 0], dtype="float32")
             maxpos = None
         return origin,maxpos
-    def transform_image(self, img, relative=True, labels=False, downsample=None):
+    def transform_image(self, img, relative=True, labels=False, downsample=None, force_size=False):
         """Generic non-rigid transformation for images.
 
         Apply the transformation to image `img`.  `pad` is the number of pixels
@@ -136,8 +136,12 @@ class Transform:
         elif isinstance(relative, tuple):
             maxpos_ = np.asarray([r[1] if isinstance(r, tuple) else r for r in relative])
             origin_ = np.asarray([r[0] if isinstance(r, tuple) else 0 for r in relative], dtype="float32")
-            origin = np.max([origin_, origin], axis=0)
-            box_kittycorner = np.min([maxpos_, maxpos], axis=0)
+            if force_size:
+                origin = origin_
+                box_kittycorner = maxpos_
+            else:
+                origin = np.max([origin_, origin], axis=0)
+                box_kittycorner = np.min([maxpos_, maxpos], axis=0)
             shape = (box_kittycorner - origin).astype(int)//downsample_output
         else:
             shape = np.asarray(img.shape).astype(int)
@@ -168,7 +172,7 @@ class Transform:
         # small images.  Supposedly it makes the output images blurrier though,
         # having't done a comparison yet.
         order = 0 if labels else 3
-        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=origin, downsample=downsample_output) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
+        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=origin, downsample=downsample_output, only_if_necessary=True) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
@@ -226,18 +230,18 @@ class AffineTransform:
     """
     def _transform(self, points):
         return points @ self.matrix - self.shift
-    def transform_image(self, image, relative=True, labels=False, downsample=None):
+    def transform_image(self, image, relative=True, labels=False, downsample=None, force_size=False):
         # Optimisation for the case where no image transform needs to be
         # performed.
         if np.all(self.matrix == np.eye(3)):
             if relative is True:
                 downsample = downsample if downsample is not None else [1,1,1]
-                return ndarray_shifted(image[::downsample[0],::downsample[1],::downsample[2]], origin=-self.shift)
+                return ndarray_shifted(image[::downsample[0],::downsample[1],::downsample[2]], origin=-self.shift, only_if_necessary=True)
             # else:
             #     newimg = np.zeros_like(image)
             #     blit(image, newimg, self.shift) # TODO test, not sure if this works
             #     return newimg
-        return super().transform_image(image, relative=relative, labels=labels, downsample=downsample)
+        return super().transform_image(image, relative=relative, labels=labels, downsample=downsample, force_size=force_size)
     def invert(self):
         """Invert the transform.
 
@@ -297,12 +301,11 @@ class TranslateRotate(AffineTransform,PointTransform):
         self.shift = np.mean(self.points_start @ self.matrix - self.points_end, axis=0)
 
 class TranslateRotateRescale(AffineTransform,PointTransform): # TODO untested inverse
-    DEFAULT_PARAMETERS = {"normal_z": 0.0, "normal_y": 0.0, "normal_x": 0.0}
     def _fit(self):
         demeaned_start = self.points_start - np.mean(self.points_start, axis=0)
         demeaned_end = self.points_end - np.mean(self.points_end, axis=0)
         self.matrix = np.linalg.inv(demeaned_start.T @ demeaned_end) @ demeaned_start.T @ demeaned_end
-        self.shift = np.mean(self.points_start@matrix - sefl.points_end, axis=0)
+        self.shift = np.mean(self.points_start@self.matrix - self.points_end, axis=0)
 
 class TranslateRotate2D(AffineTransform,PointTransform):
     def _fit(self):
@@ -368,6 +371,19 @@ class ShearFixed(AffineTransform,Transform):
 
 Shear = ShearFixed
 
+class MatrixFixed(AffineTransform,Transform):
+    """Directly use a transformation matrix.  Does not check to make sure the matrix is valid, use at your own risk!"""
+    DEFAULT_PARAMETERS = {"a11": 1, "a12": 0, "a13": 0, "a21": 0, "a22": 1, "a23": 0, "a31": 0, "a32": 0, "a33": 1, "x": 0, "y": 0, "z": 0}
+    GUI_DRAG_PARAMETERS = ["z", "y", "x"]
+    def _fit(self):
+        p = lambda num : self.params[f"a{num}"]
+        self.matrix = np.asarray([[p(11), p(12), p(13)], [p(21), p(22), p(23)], [p(31), p(32), p(33)]])
+        self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
+    def invert(self):
+        p = lambda num : self.params[f"a{num}"]
+        newzyx = [self.params["z"], self.params["y"], self.params["x"]] @ self.matrix.T
+        return self.__class__(a11=p(11), a12=p(21), a13=p(31), a21=p(12), a22=p(22), a23=p(32), a31=p(13), a32=p(23), a33=p(33), z=-newzyx[0], y=-newzyx[1], x=-newzyx[2])
+
 class Identity(AffineTransform,Transform):
     def _fit(self):
         self.matrix = np.eye(3)
@@ -376,7 +392,7 @@ class Identity(AffineTransform,Transform):
         return points
     def invert(self):
         return self.__class__()
-    def transform_image(self, image, relative=True, labels=False, downsample=None):
+    def transform_image(self, image, relative=True, labels=False, downsample=None, force_size=None):
         """More efficient implementation of image transformation"""
         # TODO This doesn't work for relative mode or downsample
         return image

@@ -1,10 +1,12 @@
 import numpy as np
 
 class ndarray_shifted(np.ndarray):
-    def __new__(cls, a, origin=[0,0,0], downsample=[1,1,1]):
+    def __new__(cls, a, origin=[0,0,0], downsample=[1,1,1], only_if_necessary=False):
         if isinstance(a, cls):
             origin = a.origin
             downsample = a.downsample
+        if np.all(origin == np.asarray([0,0,0])) and np.all(downsample == np.asarray([1,1,1])) and only_if_necessary:
+            return a
         arr = np.asarray(a).view(cls)
         arr.origin = np.asarray(origin)
         arr.downsample = np.asarray(downsample, dtype="int")
