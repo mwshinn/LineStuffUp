@@ -92,7 +92,7 @@ def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=Tru
         transform_type = g.get_transform(movable[0], base[0]) + transform_type
     return alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type)
 
-def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, downsample=None, references=[]):
+def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, downsample=None, references=[], crop=False):
     """Align images
 
     If `base_image` and/or `movable_image` are tuples, they will be interpreted
@@ -100,11 +100,15 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
 
     Reference should be a list of tuples, where each tuple is (image, transform)
 
+    "crop" allows you to reduce the drawn area of the transformed image, making transforms faster and use less memory.
+
     """
     if not isinstance(base_image, tuple):
         base_image = (base_image,)
     if not isinstance(movable_image, tuple):
         movable_image = (movable_image,)
+    bi0 = ndarray_shifted(base_image[0])
+    rel = True if crop is False else tuple(zip(bi0.origin, bi0.origin+bi0.shape)) if crop is True else crop
     pretransform = transform_type.pretransform()
     tform = pretransform
     # Test if we are editing an existing transform
@@ -122,6 +126,7 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
         assert initial_base_points is None
         assert initial_movable_points is None
     _prev_matrix = None # A special case optimisation for linear transforms
+    _prev_translate = None # A special case optimisation for linear transforms
     v = napari.Viewer()
     # v.window._qt_viewer._dockLayerList.setVisible(False)
     # v.window._qt_viewer._dockLayerControls.setVisible(False)
@@ -129,8 +134,8 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
     movable_points = [] if initial_movable_points is None else list(initial_movable_points)
     tform_type = transform_type
     layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0]), scale=(bi.downsample if isinstance(bi, ndarray_shifted) else [1, 1, 1])) for bi in base_image]
-    layers_movable = [v.add_image(tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi), downsample=downsample), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi)[0], scale=downsample) for mi in movable_image]
-    layers_reference = [v.add_image(rt.transform_image(ri, relative=True, labels=utils.image_is_label(ri), downsample=downsample), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri)[0], scale=downsample) for i,(ri,rt) in enumerate(references)]
+    layers_movable = [v.add_image(tform.transform_image(mi, relative=rel, labels=utils.image_is_label(mi), downsample=downsample), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi, relative=rel)[0], scale=downsample) for mi in movable_image]
+    layers_reference = [v.add_image(rt.transform_image(ri, relative=rel, labels=utils.image_is_label(ri), downsample=downsample), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, relative=rel)[0], scale=downsample) for i,(ri,rt) in enumerate(references)]
     if is_point_transform:
         layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
         layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, 1, .6, 1])
@@ -226,9 +231,9 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
         for b in buttons:
             b.enabled = False
         v.mouse_drag_callbacks.append(remove_click_callback)
-    def apply_transform(*args, transform=None, **kwargs):
+    def apply_transform(*args, transform=None, force=True, **kwargs):
         # kwargs here are extra parameters to pass to the transform.
-        nonlocal tform, movable_points, params, _prev_matrix
+        nonlocal tform, movable_points, params, _prev_matrix, _prev_translate
         if transform is not None:
             tform = transform
             if is_point_transform:
@@ -250,14 +255,16 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
             # This if statement is a special case optimisation for
             # AffineTransforms only to avoid rerending the image if only the
             # origin/translation has changed.
-            print("prev matrix", _prev_matrix, tform)
-            if _prev_matrix is None or (not isinstance(tform, AffineTransform)) or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
-                print("Updated")
-                layer_movable.data = tform.transform_image(mi, relative=True, labels=utils.image_is_label(mi), downsample=downsample)
-            layer_movable.translate = tform.origin_and_maxpos(mi)[0]
+            if force or _prev_matrix is None or (not isinstance(tform, AffineTransform)) or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
+                layer_movable.data = tform.transform_image(mi, relative=rel, labels=utils.image_is_label(mi), downsample=downsample)
+                layer_movable.translate = tform.origin_and_maxpos(mi, relative=rel)[0]
+            else:
+                # This is complicated due to the possibilty of dragging a cropped image out of the crop boundaries
+                layer_movable.translate = _prev_translate - tform.shift
             layer_movable.refresh()
-        if isinstance(tform, AffineTransform):
+        if isinstance(tform, AffineTransform) and (np.any(_prev_matrix != tform.matrix) or force):
             _prev_matrix = tform.matrix
+            _prev_translate = tform.origin_and_maxpos(mi, relative=rel)[0] + tform.shift
         for b in buttons: # Turn buttons back on when transform is done
             b.enabled = True
     def set_point_size(zoom=None):
@@ -315,7 +322,7 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
         def widget_callback(*args,p=p,w=w):
             params[p] = w.value
             if dynamic_update.value:
-                apply_transform()
+                apply_transform(force=False)
         w.changed.connect(widget_callback)
         widgets.append(w)
         if p in transform_type.GUI_DRAG_PARAMETERS:

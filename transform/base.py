@@ -98,7 +98,7 @@ class Transform:
         return self.invert().transform(points)
     def invert(self):
         raise NotImplementedError("Please subclass and replace")
-    def origin_and_maxpos(self, img):
+    def origin_and_maxpos(self, img, relative=True, force_size=False):
         """When using relative mode for image transformation, find the corners of the bounds based on the input image size"""
         input_bounds = img.shape
         origin_offset = img.origin if isinstance(img, ndarray_shifted) else [0,0,0]
@@ -114,6 +114,22 @@ class Transform:
         else:
             origin = np.asarray([0, 0, 0], dtype="float32")
             maxpos = None
+        if relative is True: # the default
+            pass
+        elif isinstance(relative, tuple): # Manually specifying coordinates
+            maxpos_ = np.asarray([r[1] if isinstance(r, tuple) else r if r is not None else np.inf for r in relative], dtype="float32")
+            origin_ = np.asarray([r[0] if isinstance(r, tuple) else 0 if r is not None else -np.inf for r in relative], dtype="float32")
+            if force_size:
+                origin = origin_
+                maxpos = maxpos_
+            else:
+                origin = np.max([origin_, origin], axis=0)
+                maxpos = np.min([maxpos_, maxpos], axis=0)
+        elif relative is False: # Not sure why we would want this behaviour
+            maxpos = np.asarray(img.shape).astype(int)
+            origin = np.zeros(3, dtype="float32")
+        else:
+            raise ValueError(f"Invalid value of `relative` passed: {relative}")
         return origin,maxpos
     def transform_image(self, img, relative=True, labels=False, downsample=None, force_size=False):
         """Generic non-rigid transformation for images.
@@ -129,23 +145,12 @@ class Transform:
         """
         if img.ndim == 2:
             img = img[None]
-        origin, maxpos = self.origin_and_maxpos(img)
+        origin, maxpos = self.origin_and_maxpos(img, relative=relative, force_size=force_size)
         downsample_output = np.asarray([1, 1, 1], dtype="int") if downsample is None else np.asarray([downsample, downsample, downsample], dtype="int") if isinstance(downsample, np.integer) else np.asarray(downsample, dtype="int")
-        if relative is True:
-            shape = np.round(np.ceil(maxpos - origin)/downsample_output).astype(int)
-        elif isinstance(relative, tuple):
-            maxpos_ = np.asarray([r[1] if isinstance(r, tuple) else r for r in relative])
-            origin_ = np.asarray([r[0] if isinstance(r, tuple) else 0 for r in relative], dtype="float32")
-            if force_size:
-                origin = origin_
-                box_kittycorner = maxpos_
-            else:
-                origin = np.max([origin_, origin], axis=0)
-                box_kittycorner = np.min([maxpos_, maxpos], axis=0)
-            shape = (box_kittycorner - origin).astype(int)//downsample_output
-        else:
-            shape = np.asarray(img.shape).astype(int)
-            origin = np.zeros(3, dtype="float32")
+        shape = (maxpos - origin).astype(int)//downsample_output
+        # shape = np.round(np.ceil(maxpos - origin)/downsample_output).astype(int) # Maybe this is better?
+        # shape = np.asarray(img.shape).astype(int) # Pulled from old code
+
         if img.shape[0] == 1: # This is a hack to get around thickness=1 images disappearing in the map_coordinates function 
             img = np.concatenate([img, img])
         if img.shape[1] == 1:
