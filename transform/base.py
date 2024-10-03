@@ -305,12 +305,23 @@ class TranslateRotate(AffineTransform,PointTransform):
         self.matrix = U@V
         self.shift = np.mean(self.points_start @ self.matrix - self.points_end, axis=0)
 
-class TranslateRotateRescale(AffineTransform,PointTransform): # TODO untested inverse
+class TranslateRotateRescale(AffineTransform,PointTransform):
+    DEFAULT_PARAMETERS = {"invert": False}
     def _fit(self):
-        demeaned_start = self.points_start - np.mean(self.points_start, axis=0)
-        demeaned_end = self.points_end - np.mean(self.points_end, axis=0)
-        self.matrix = np.linalg.inv(demeaned_start.T @ demeaned_end) @ demeaned_start.T @ demeaned_end
-        self.shift = np.mean(self.points_start@self.matrix - self.points_end, axis=0)
+        if self.params['invert']:
+            _start = self.points_end
+            _end = self.points_start
+        else:
+            _start = self.points_start
+            _end = self.points_end
+        start = np.hstack([np.ones((_start.shape[0],1)), _start])
+        reg_coefs = np.linalg.inv(start.T @ start) @ start.T @ _end
+        self.matrix = reg_coefs[1:]
+        if self.params['invert']:
+            self.matrix = np.linalg.inv(self.matrix)
+        self.shift = np.mean(self.points_start @ self.matrix - self.points_end, axis=0)
+    def invert(self):
+        return self.__class__(points_start=self.points_end, points_end=self.points_start, invert=(not self.params["invert"]))
 
 class TranslateRotate2D(AffineTransform,PointTransform):
     def _fit(self):
@@ -355,6 +366,18 @@ class TranslateRotateFixed(AffineTransform,Transform):
     def invert(self):
         newzyx = [self.params["z"], self.params["y"], self.params["x"]] @ self.matrix.T
         return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], invert=True)
+
+class TranslateRotateRescaleFixed(AffineTransform,Transform):
+    DEFAULT_PARAMETERS = {"z": 0.0, "y": 0.0, "x": 0.0, "zrotate": 0.0, "yrotate": 0.0, "xrotate": 0.0, "zscale": 1.0, "yscale": 1.0, "xscale": 1.0, "invert": False}
+    GUI_DRAG_PARAMETERS = ["z", "y", "x"]
+    def _fit(self):
+        self.matrix = rotation_matrix(self.params["zrotate"], self.params["yrotate"], self.params["xrotate"]) @ np.asarray([[self.params["zscale"], 0, 0], [0, self.params["yscale"], 0], [0, 0, self.params["xscale"]]])
+        if self.params['invert']:
+            self.matrix = np.linalg.inv(self.matrix)
+        self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
+    def invert(self):
+        newzyx = [self.params["z"], self.params["y"], self.params["x"]] @ np.linalg.inv(self.matrix)
+        return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], zscale=self.params["zscale"], yscale=self.params["yscale"], xscale=self.params["xscale"], invert=True)
 
 class TranslateRotateRescale2DFixed(AffineTransform,Transform):
     DEFAULT_PARAMETERS = {"y": 0.0, "x": 0.0, "rotate": 0.0, "scale": 1.0}
