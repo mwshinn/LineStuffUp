@@ -170,8 +170,8 @@ class Transform:
         mapped_grid = self.inverse_transform(grid)
         del grid
         if isinstance(img, ndarray_shifted): # Adjust for input origin and downsampling
+            mapped_grid *= img.scale
             mapped_grid += img.origin
-            mapped_grid *= img.downsample
         displacement = mapped_grid.reshape(*shape[::-1],3).T
         # Prefilter == False speeds it up a lot when going from big images to
         # small images.  Supposedly it makes the output images blurrier though,
@@ -238,10 +238,11 @@ class AffineTransform:
     def transform_image(self, image, relative=True, labels=False, downsample=None, force_size=False):
         # Optimisation for the case where no image transform needs to be
         # performed.
+        # TODO Doesn't work if input image is downsampled or shifted
         if np.all(self.matrix == np.eye(3)):
             if relative is True:
                 downsample = downsample if downsample is not None else [1,1,1]
-                return ndarray_shifted(image[::downsample[0],::downsample[1],::downsample[2]], origin=-self.shift, only_if_necessary=True)
+                return ndarray_shifted(image[::downsample[0],::downsample[1],::downsample[2]], scale=downsample, origin=-self.shift, only_if_necessary=True)
             # else:
             #     newimg = np.zeros_like(image)
             #     blit(image, newimg, self.shift) # TODO test, not sure if this works
@@ -423,6 +424,8 @@ class Identity(AffineTransform,Transform):
     def transform_image(self, image, relative=True, labels=False, downsample=None, force_size=None):
         """More efficient implementation of image transformation"""
         # TODO This doesn't work for relative mode or downsample
+        if downsample is not None:
+            return image[::downsample[0],::downsample[1],::downsample[2]]
         return image
 
 class Rescale(AffineTransform,Transform):
