@@ -78,11 +78,11 @@ def plot_from_graph(g, ims, output_space=None):
         references = els[1:]
     alignment_gui(els[0][0], base_image, els[0][1], references=references)
 
-def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=True):
+def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=False, references=[]):
     # TODO Currently assumes all base images are in the same space
-    if not isinstance(base, list):
+    if not isinstance(base, (list, tuple)):
         base = [base]
-    if not isinstance(movable, list):
+    if not isinstance(movable, (list, tuple)):
         movable = [movable]
     base_images = [g.get_image(bi) for bi in base]
     movable_images = [g.get_image(mi) for mi in movable]
@@ -90,7 +90,9 @@ def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=Tru
         transform_type = g.get_transform(movable[0], base[0])
     elif add_transform:
         transform_type = g.get_transform(movable[0], base[0]) + transform_type
-    return alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type)
+    if references:
+        references = [(g.get_image(r), g.get_transform(r, base[0])) for r in references] 
+    return alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type, references=references)
 
 def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, downsample=None, references=[], crop=False):
     """Align images

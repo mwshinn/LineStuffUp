@@ -176,8 +176,8 @@ class Transform:
         # Prefilter == False speeds it up a lot when going from big images to
         # small images.  Supposedly it makes the output images blurrier though,
         # having't done a comparison yet.
-        order = 0 if labels else 3
-        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=origin, downsample=downsample_output, only_if_necessary=True) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
+        order = 0 if labels else 1
+        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=origin, scale=downsample_output, only_if_necessary=True) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
