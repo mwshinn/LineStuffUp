@@ -157,27 +157,50 @@ class Transform:
             img = img*np.ones((1,2,1))
         if img.shape[2] == 1:
             img = img*np.ones((1,1,2))
+        # For memory efficiency, we split coords into chunks
+        zcoords = np.arange(0, shape[0]*downsample_output[0], downsample_output[0], dtype="int")
+        ycoords = np.arange(0,shape[1]*downsample_output[1], downsample_output[1], dtype="int")
+        xcoords = np.arange(0,shape[2]*downsample_output[2], downsample_output[2], dtype="int")
+        def chunker(zcoords, ycoords, xcoords, chunksize=100_000_000):
+            """It takes lots of memory to do this all at once so we create chunks based on z planes"""
+            zsize = len(ycoords)*len(xcoords)
+            n_z_per_chunk = np.maximum(chunksize // zsize, 1)
+            single_plane = np.asarray([np.repeat(ycoords, len(xcoords)), np.tile(xcoords, len(ycoords))], dtype="float32")
+            zcoords_float32 = np.asarray(zcoords, dtype="float32")
+            for i in range(0, 100000):
+                zfrom, zto = n_z_per_chunk*i,n_z_per_chunk*(i+1)
+                if zfrom >= len(zcoords):
+                    return
+                if zto > len(zcoords):
+                    zto = len(zcoords)
+                inds = (slice(zfrom,zto), slice(None), slice(None))
+                chunk_shape = (zto-zfrom, len(ycoords), len(xcoords))
+                coords = np.concatenate([np.repeat(zcoords_float32[zfrom:zto], single_plane.shape[1])[None,:], np.tile(single_plane, zto-zfrom)], axis=0).T
+                yield coords, chunk_shape, inds
+
         # First, we construct a list of coordinates of all the pixels in the
         # image, and transform them to find out which point is mapped to which
         # other point.  Then, we inverse transform them to construct a matrix of
         # mappings.  We turn this matrix of mappings into a matrix of pointers
         # from the destination image to the source image, and then use the
         # map_coordinates function to perform this mapping.
-        meshgrid = np.array(np.meshgrid(np.arange(0, shape[0]*downsample_output[0], downsample_output[0], dtype="float32"), np.arange(0,shape[1]*downsample_output[1], downsample_output[1], dtype="float32"), np.arange(0,shape[2]*downsample_output[2], downsample_output[2], dtype="float32"), indexing="ij"), dtype="float32")
-        grid = meshgrid.T.reshape(-1,3)
-        del meshgrid
-        grid += origin
-        mapped_grid = self.inverse_transform(grid)
-        del grid
-        if isinstance(img, ndarray_shifted): # Adjust for input origin and downsampling
-            mapped_grid *= img.scale
-            mapped_grid += img.origin
-        displacement = mapped_grid.reshape(*shape[::-1],3).T
-        # Prefilter == False speeds it up a lot when going from big images to
-        # small images.  Supposedly it makes the output images blurrier though,
-        # having't done a comparison yet.
-        order = 0 if labels else 1
-        return ndarray_shifted(scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=order), origin=origin, scale=downsample_output, only_if_necessary=True) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
+        output = np.zeros((len(zcoords),len(ycoords),len(xcoords)), dtype=(img.dtype if labels else "float32"))
+        for grid,chunk_shape,inds in chunker(zcoords, ycoords, xcoords):
+            #grid = meshgrid.T.reshape(-1,3)
+            grid += origin
+            mapped_grid = self.inverse_transform(grid)
+            print(mapped_grid.shape, chunk_shape, inds)
+            del grid
+            if isinstance(img, ndarray_shifted): # Adjust for input origin and downsampling
+                mapped_grid *= img.scale
+                mapped_grid += img.origin
+            displacement = mapped_grid.reshape(*chunk_shape,3).transpose(3,0,1,2)
+            # Prefilter == False speeds it up a lot when going from big images
+            # to small images.  Supposedly it makes the output images blurrier
+            # though, having't done a comparison yet. (I would naively think the
+            # problem would be aliasing, not blur?)
+            output[inds] = scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=(0 if labels else 1))
+        return ndarray_shifted(output, origin=origin, scale=downsample_output, only_if_necessary=True) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.

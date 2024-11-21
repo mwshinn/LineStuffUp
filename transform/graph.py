@@ -183,15 +183,32 @@ class TransformGraph:
         except ImportError:
             raise ImportError("Please install graphviz package to visualise")
         g = graphviz.Digraph(self.name, filename=filename)
+        # Find all nodes that have an Identity edge and choose one as the 'base" node
+        ur_node = {}
+        ur_node_names = {}
+        for e1 in self.edges.keys():
+            found = False
+            ident_edges = [e2 for e2 in self.edges[e1] if self.edges[e1][e2].__class__.__name__ == "Identity"]
+            for e2 in ident_edges:
+                if e2 in ur_node.keys() and ur_node[e2] == e2:
+                    ur_node[e1] = e2
+                    ur_node_names[e2] += "\n"+e1
+                    found = True
+                    break
+            if not found:
+                ur_node[e1] = e1
+                ur_node_names[e1] = e1
         for e1 in self.edges.keys():
             for e2 in self.edges[e1].keys():
                 if nearby is not None and e1 != nearby and e2 != nearby:
                     continue
                 if e1 in self.edges[e2].keys() and self.edges[e1][e2].__class__.__name__ == self.edges[e2][e1].__class__.__name__:
-                    if e1 > e2:
-                        g.edge(e1, e2, label=self.edges[e1][e2].__class__.__name__, dir="both")
+                    if e1 > e2 and self.edges[e1][e2].__class__.__name__ != "Identity":
+                        g.edge(ur_node[e1], ur_node[e2], label=self.edges[e1][e2].__class__.__name__, dir="both")
                 else:
-                    g.edge(e1, e2, label=self.edges[e1][e2].__class__.__name__)
+                    g.edge(ur_node[e1], ur_node[e2], label=self.edges[e1][e2].__class__.__name__)
+        for n in ur_node_names.keys():
+            g.node(n, label=ur_node_names[n])
         g.view()
         if filename is None: # Temporary file
             os.unlink(fn)
