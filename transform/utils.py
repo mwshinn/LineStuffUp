@@ -63,12 +63,12 @@ def bake_images(im_fixed, im_movable, transform):
     return ndarray_shifted(im, origin=new_dims_min)
 
 def absolute_coords_to_voxel_coords(img, coords):
-    if not isinstance(img, ndimage_shifted):
+    if not isinstance(img, ndarray_shifted):
         img = ndarray_shifted(img)
     return np.round((coords - img.origin)/img.scale).astype(int)
 
 def voxel_coords_to_absolute_coords(img, coords):
-    if not isinstance(img, ndimage_shifted):
+    if not isinstance(img, ndarray_shifted):
         img = ndarray_shifted(img)
     return coords * img.scale + img.origin
 

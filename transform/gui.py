@@ -94,7 +94,7 @@ def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=Fal
         references = [(g.get_image(r), g.get_transform(r, base[0])) for r in references] 
     return alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type, references=references)
 
-def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, downsample=None, references=[], crop=False):
+def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, downsample=None, references=[], crop=False, auto_find_peak_radius=2):
     """Align images
 
     If `base_image` and/or `movable_image` are tuples, they will be interpreted
@@ -150,17 +150,38 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
         # The logic to get this to work is out of order, so please read code in the
         # order specified in the comments.
         temp_points = []
+        # Utility function: local ascent
+        def find_local_maximum(image, starting_point, w=3):
+            point = np.round(starting_point).astype(int)
+            l = np.maximum(point-w, point*0)
+            u = point+w
+            region = image[tuple([slice(i,j+1) for i,j in zip(l,u)])]
+            peak_ind = tuple(np.unravel_index(np.argmax(region), region.shape)+point-np.minimum(point, 0*point+w))
+            point = tuple(point)
+            if np.all(image[peak_ind] == image[point]): # Can't compare directly in case neighbours have same value
+                return point
+            return find_local_maximum(image, peak_ind)
+        def best_layer(layers):
+            for l in layers:
+                if l.visible:
+                    return l
+            return layers[0]
         # Step 2: Processe base layer click
         def base_click_callback(viewer, e):
             if e.type != "mouse_press":
                 return
+            # If right click, find the nearby peak
+            if e.button == 2: # Right click
+                pos = find_local_maximum(best_layer(layers_base).data, e.position)
+            else:
+                pos = e.position
             # Step 2a: Process base layer click
-            temp_points.append(e.position)
+            temp_points.append(pos)
             for layer_base in layers_base:
                 layer_base.mouse_drag_callbacks.pop()
             for layer_movable in layers_movable:
                 layer_movable.mouse_drag_callbacks.append(movable_click_callback)
-            layer_base_points.data = np.vstack([layer_base_points.data, e.position])
+            layer_base_points.data = np.vstack([layer_base_points.data, pos])
             set_point_size()
             # Step 2b: Prepare for movable layer click
             v.layers.selection = set([layers_movable[0]])
@@ -173,9 +194,15 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
             nonlocal tform
             if e.type != "mouse_press":
                 return
+            # If right click, find the nearby peak
+            if e.button == 2: # Right click
+                bl = best_layer(layers_movable)
+                pos = find_local_maximum(bl.data, e.position - bl.translate) + bl.translate
+            else:
+                pos = e.position
             # Step 3a: Process movable layer click
             base_points.append(temp_points[0])
-            movable_points.append(pretransform.transform(utils.invert_transform_numerical(tform, e.position)))
+            movable_points.append(pretransform.transform(utils.invert_transform_numerical(tform, pos)))
             for layer_movable in layers_movable:
                 layer_movable.mouse_drag_callbacks.pop()
             for layer_base in layers_base:
