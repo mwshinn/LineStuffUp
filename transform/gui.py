@@ -1,5 +1,6 @@
 from .base import Identity, Translate, Transform, PointTransform, AffineTransform
 import numpy as np
+import scipy.ndimage
 import napari
 import magicgui
 import vispy
@@ -151,11 +152,35 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
         # order specified in the comments.
         temp_points = []
         # Utility function: local ascent
-        def find_local_maximum(image, starting_point, w=3):
+        def find_local_maximum(image, starting_point, w=3, stdev=2):
+            """Find the local maximum near a point.
+
+            This algorithm performs gradient ascent to find a local maximum.  It
+            smooths first in a local region to avoid plateaus, often caused by
+            quantized data.
+
+            Parameter `w` describes how big of a window to look for when
+            performing gradient ascent.  Parameter `stdev` is the smoothing
+            amount.  Set `stdev` to 0 to avoid smoothing.  For positive `stdev`
+            values, select a bigger region than specified by `w`, smooth it, and
+            then select the desired size.
+
+            """
             point = np.round(starting_point).astype(int)
             l = np.maximum(point-w, point*0)
             u = point+w
-            region = image[tuple([slice(i,j+1) for i,j in zip(l,u)])]
+            if stdev == 0:
+                region = image[tuple([slice(i,j+1) for i,j in zip(l,u)])]
+            else:
+                w_extra = np.ceil(stdev).astype(int)*2 + w
+                l_extra = np.maximum(point-w_extra, point*0)
+                u_extra = point+w_extra
+                region_pre = image[tuple([slice(i,j+1) for i,j in zip(l_extra,u_extra)])]
+                region_smooth = scipy.ndimage.gaussian_filter(region_pre, stdev)
+                region = region_smooth[tuple([slice(i-ie,j-je if je>j else None) for i,ie,j,je in zip(l,l_extra,u,u_extra)])]
+                print("extras", l, u, w_extra, l_extra, u_extra)
+                [print(slice(i-ie,je-j if je>j else None)) for i,ie,j,je in zip(l,l_extra,u,u_extra)]
+                print(region_smooth.shape, region.shape)
             peak_ind = tuple(np.unravel_index(np.argmax(region), region.shape)+point-np.minimum(point, 0*point+w))
             point = tuple(point)
             if np.all(image[peak_ind] == image[point]): # Can't compare directly in case neighbours have same value
