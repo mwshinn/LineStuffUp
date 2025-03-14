@@ -161,7 +161,7 @@ class Transform:
         zcoords = np.arange(0, shape[0]*downsample_output[0], downsample_output[0], dtype="int")
         ycoords = np.arange(0,shape[1]*downsample_output[1], downsample_output[1], dtype="int")
         xcoords = np.arange(0,shape[2]*downsample_output[2], downsample_output[2], dtype="int")
-        def chunker(zcoords, ycoords, xcoords, chunksize=100_000_000):
+        def chunker(zcoords, ycoords, xcoords, chunksize=10_000_000):
             """It takes lots of memory to do this all at once so we create chunks based on z planes"""
             zsize = len(ycoords)*len(xcoords)
             n_z_per_chunk = np.maximum(chunksize // zsize, 1)
@@ -189,7 +189,7 @@ class Transform:
             #grid = meshgrid.T.reshape(-1,3)
             grid += origin
             mapped_grid = self.inverse_transform(grid)
-            print(mapped_grid.shape, chunk_shape, inds)
+            #print(mapped_grid.shape, chunk_shape, inds)
             del grid
             if isinstance(img, ndarray_shifted): # Adjust for input origin and downsampling
                 mapped_grid *= img.scale
@@ -328,6 +328,49 @@ class TranslateRotate(AffineTransform,PointTransform):
         U,S,V = np.linalg.svd(demeaned_start.T @ demeaned_end)
         self.matrix = U@V
         self.shift = np.mean(self.points_start @ self.matrix - self.points_end, axis=0)
+
+class TranslateRotateRescaleByPlane(AffineTransform,PointTransform):
+    """Translate, Rotate, and Rescale for planes (e.g., sections)
+
+    We do not want to perform a linear regression from starting points to ending
+    points as in TranslateRotateRescale, because this can cause some gnarly skew
+    due to the difference in point spacing in the thin dimension compared to the
+    thicker dimensions.  So, this performs PCA, and then performs two
+    regressions: one for the two high variance dimensions, and another
+    separately for the lowest-variance dimension.
+
+    """
+    DEFAULT_PARAMETERS = {"invert": False}
+    def _fit(self):
+        if self.params['invert']:
+            _start = self.points_end
+            _end = self.points_start
+        else:
+            _start = self.points_start
+            _end = self.points_end
+        # PCA
+        demeaned_start = _start - np.mean(_start, axis=0)
+        demeaned_end = _end - np.mean(_end, axis=0)
+        U,S,V = np.linalg.svd(demeaned_start.T @ demeaned_end)
+        assert np.all(np.sort(S)[::-1] == S), "SVD is not sorted correctly"
+        # Regression for the high-variance dimensions
+        proj_start = demeaned_start @ U[:,:2]
+        proj_end = demeaned_end @ V.T[:,:2]
+        _proj_start = np.hstack([np.ones((proj_start.shape[0],1)), proj_start])
+        reg_coefs = np.linalg.inv(_proj_start.T @ _proj_start) @ _proj_start.T @ proj_end
+        # Regression for the low-variance dimension
+        depth_start = demeaned_start @ U[:,[2]]
+        depth_end = demeaned_end @ V.T[:,[2]]
+        _depth_start = np.hstack([np.ones((depth_start.shape[0],1)), depth_start])
+        depth_reg_coefs = np.linalg.inv(_depth_start.T @ _depth_start) @ _depth_start.T @ depth_end
+        # Combine the two
+        self.matrix = U @ (scipy.linalg.block_diag(reg_coefs[1:], 0) + np.diag([0, 0, depth_reg_coefs[1,0]])) @ V
+        print(self.matrix)
+        if self.params['invert']:
+            self.matrix = np.linalg.inv(self.matrix)
+        self.shift = np.mean(self.points_start @ self.matrix - self.points_end, axis=0)
+    def invert(self):
+        return self.__class__(points_start=self.points_end, points_end=self.points_start, invert=(not self.params["invert"]))
 
 class TranslateRotateRescale(AffineTransform,PointTransform):
     DEFAULT_PARAMETERS = {"invert": False}

@@ -15,6 +15,7 @@ class TransformGraph:
         self.compressed_node_images = {} # If a node has an associated image, the compressed version is stored here and loaded dynamically into node_images
         self.node_notes = {}
         self.filename = None
+        self.metadata = None
     def __eq__(self, other):
         return (self.name == other.name) and \
             self.nodes == other.nodes and \
@@ -29,7 +30,7 @@ class TransformGraph:
         node_images_values = [self.compressed_node_images[k] for k in node_images_keys]
         node_image_arrays_compressed = {f"nodeimage_{i}": node_images_values[i][0] for i in range(0, len(node_images_values))}
         node_image_arrays_info = {f"nodeimageinfo_{i}": node_images_values[i][1] for i in range(0, len(node_images_values))}
-        np.savez_compressed(filename, name=self.name, nodes=self.nodes, nodeimage_keys=node_images_keys, **node_image_arrays_compressed, **node_image_arrays_info, edges=repr(self.edges), notes=repr(self.node_notes))
+        np.savez_compressed(filename, name=self.name, nodes=self.nodes, nodeimage_keys=node_images_keys, **node_image_arrays_compressed, **node_image_arrays_info, edges=repr(self.edges), notes=repr(self.node_notes), metadata=repr(self.metadata))
     @classmethod
     def load(cls, filename):
         f = np.load(filename)
@@ -41,6 +42,8 @@ class TransformGraph:
             g.compressed_node_images[n] = (f[f'nodeimage_{i}'], f[f'nodeimageinfo_{i}'])
         if "notes" in f.keys():
             g.node_notes = eval(str(f['notes']))
+        if "metadata" in f.keys():
+            g.metadata = eval(str(f['metadata']))
         g.filename = filename
         return g
     @classmethod
@@ -148,6 +151,8 @@ class TransformGraph:
     def get_transform(self, frm, to):
         assert frm in self.nodes, f"Node {frm} not found"
         assert to in self.nodes, f"Node {to} not found"
+        if frm == to:
+            return transform.Identity()
         def _get_transform_from_chain(chain):
             cur = frm
             tform = None
@@ -167,6 +172,7 @@ class TransformGraph:
             candidates.extend(to_append)
         raise RuntimeError(f"Path from '{frm}' to '{to}' not found")
     def get_image(self, node):
+        print("Getting image", node)
         if node not in self.node_images.keys():
             if len(self.compressed_node_images[node][1]) == 0: # First element is a string of a node
                 imnode = str(self.compressed_node_images[node][0])
@@ -182,7 +188,7 @@ class TransformGraph:
             import graphviz
         except ImportError:
             raise ImportError("Please install graphviz package to visualise")
-        g = graphviz.Digraph(self.name, filename=filename)
+        g = graphviz.Digraph(self.name, filename=fn)
         # Find all nodes that have an Identity edge and choose one as the 'base" node
         ur_node = {}
         ur_node_names = {}
@@ -198,6 +204,7 @@ class TransformGraph:
             if not found:
                 ur_node[e1] = e1
                 ur_node_names[e1] = e1
+        ur_nodes_used = set()
         for e1 in self.edges.keys():
             for e2 in self.edges[e1].keys():
                 if nearby is not None and e1 != nearby and e2 != nearby:
@@ -205,9 +212,13 @@ class TransformGraph:
                 if e1 in self.edges[e2].keys() and self.edges[e1][e2].__class__.__name__ == self.edges[e2][e1].__class__.__name__:
                     if e1 > e2 and self.edges[e1][e2].__class__.__name__ != "Identity":
                         g.edge(ur_node[e1], ur_node[e2], label=self.edges[e1][e2].__class__.__name__, dir="both")
+                        ur_nodes_used.add(ur_node[e1])
+                        ur_nodes_used.add(ur_node[e2])
                 else:
                     g.edge(ur_node[e1], ur_node[e2], label=self.edges[e1][e2].__class__.__name__)
-        for n in ur_node_names.keys():
+                    ur_nodes_used.add(ur_node[e1])
+                    ur_nodes_used.add(ur_node[e2])
+        for n in sorted(ur_nodes_used):
             g.node(n, label=ur_node_names[n])
         g.view()
         if filename is None: # Temporary file
