@@ -57,7 +57,6 @@ def bake_images(im_fixed, im_movable, transform):
     new_dims_max = np.ceil(np.max([ti.shape + origin, im_fixed.shape], axis=0)).astype(int)
     new_dims_min = np.floor(np.min([origin, [0,0,0]], axis=0)).astype(int)
     im = np.zeros(new_dims_max-new_dims_min, dtype=float)
-    print(new_dims_max, new_dims_min, im.shape)
     blit(im_fixed, im, tuple([0,0,0]-new_dims_min))
     blit(im_movable, im, tuple(origin.astype(int)-new_dims_min))
     return ndarray_shifted(im, origin=new_dims_min)
@@ -166,7 +165,6 @@ def compress_image(img, level="normal"):
         minplanes = np.min(img)
         imgnorm = img.copy()
         imgnorm[imgnorm>maxplanes] = maxplanes
-        print(maxplanes, minplanes)
         imgnorm -= minplanes
         for i in range(0, imgnorm.shape[0]):
             imgnorm[i] = imgnorm[i]/(maxplanes-minplanes)*255
@@ -177,7 +175,6 @@ def compress_image(img, level="normal"):
         pady = 16 - (imgnorm.shape[1] % 16) % 16
         padx = 16 - (imgnorm.shape[2] % 16) % 16
         imgnorm = np.pad(imgnorm, ((0,0), (0,pady), (0,padx)))
-        print("Newscale", imgnorm.shape, pady, padx, img.shape, zdim)
         kind = [1, transform_id, bitrate, maxplanes, minplanes, pady, padx, zdim]
         pseudofile = io.BytesIO()
         writer = imageio.get_writer(pseudofile, format="webm", fps=30, bitrate=bitrate, codec="vp9", macro_block_size=16)
@@ -209,7 +206,6 @@ def decompress_image(data, kind):
         return data
     if int(kind[0]) == 1:
         _,transform_id,bitrate,maxval,minval,pady,padx,zdim = kind
-        print(maxval, minval)
         padx = int(padx)
         pady = int(pady)
         pseudofile = io.BytesIO(data.tobytes())
@@ -259,3 +255,4 @@ def invert_transform_numerical(tform, points):
     if points.ndim == 2:
         return np.asarray([invert_transform_numerical(tform, points[i]) for i in range(0, points.shape[0])])
     return invert_function_numerical(tform.transform, np.asarray([x]))
+

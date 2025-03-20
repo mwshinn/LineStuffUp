@@ -1,4 +1,4 @@
-from .base import Identity, Translate, Transform, PointTransform, AffineTransform
+from .base import Identity, Translate, Transform, PointTransform, AffineTransform, FlipFixed
 import numpy as np
 import scipy.ndimage
 import napari
@@ -178,9 +178,6 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
                 region_pre = image[tuple([slice(i,j+1) for i,j in zip(l_extra,u_extra)])]
                 region_smooth = scipy.ndimage.gaussian_filter(region_pre, stdev)
                 region = region_smooth[tuple([slice(i-ie,j-je if je>j else None) for i,ie,j,je in zip(l,l_extra,u,u_extra)])]
-                print("extras", l, u, w_extra, l_extra, u_extra)
-                [print(slice(i-ie,je-j if je>j else None)) for i,ie,j,je in zip(l,l_extra,u,u_extra)]
-                print(region_smooth.shape, region.shape)
             peak_ind = tuple(np.unravel_index(np.argmax(region), region.shape)+point-np.minimum(point, 0*point+w))
             point = tuple(point)
             if np.all(image[peak_ind] == image[point]): # Can't compare directly in case neighbours have same value
@@ -197,7 +194,10 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
                 return
             # If right click, find the nearby peak
             if e.button == 2: # Right click
-                pos = find_local_maximum(best_layer(layers_base).data, e.position)
+                try:
+                    pos = find_local_maximum(best_layer(layers_base).data, e.position)
+                except RecursionError:
+                    pos = e.position
             else:
                 pos = e.position
             # Step 2a: Process base layer click
@@ -398,3 +398,161 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
     v.show(block=True)
     print(tform)
     return tform
+
+def align_interactive(nodes_movable, nodes_fixed, graph=None, start=None, references=[]):
+    _TRANSFORMS_FOR_INTERACTIVE = {}
+    _queue = Transform.__subclasses__()
+    _reserved = "fezudsSqxc"
+    while len(_queue) > 0:
+        c = _queue.pop()
+        if hasattr(c, "SHORTCUT_KEY") and len(c.SHORTCUT_KEY) != 0:
+            assert len(c.SHORTCUT_KEY) == 1, f"Class {c} has a shortcut key '{c.SHORTCUT_KEY}' which is longer than one character"
+            assert c.SHORTCUT_KEY not in _TRANSFORMS_FOR_INTERACTIVE.keys(), f"Shortcut keys must be unique, but classes {c} and {_TRANSFORMS_FOR_INTERACTIVE[c.SHORTCUT_KEY]} have shortcut key {c.SHORTCUT_KEY}"
+            assert c.SHORTCUT_KEY not in _reserved, f"Shortcut key {c.SHORTCUT_KEY} from transform {c} is reserved, please choose a different one"
+            _TRANSFORMS_FOR_INTERACTIVE[c.SHORTCUT_KEY] = c
+        _queue.extend(c.__subclasses__())
+
+    # Sort
+    _TRANSFORMS_FOR_INTERACTIVE = {k : v for k,v in sorted(_TRANSFORMS_FOR_INTERACTIVE.items(), key=lambda x : x[1].SORT_WEIGHT)}
+    # Split into point-based and non-point-based
+    _POINT_BASED = {k : v for k,v in _TRANSFORMS_FOR_INTERACTIVE.items() if issubclass(v, PointTransform)}
+    _NON_POINT_BASED = {k : v for k,v in _TRANSFORMS_FOR_INTERACTIVE.items() if not issubclass(v, PointTransform)}
+    # Generate the strings for printing the help screen
+    _PARAMETRIC_NAMES = "\n".join([f"{k}: {v.NAME}" for k,v in _NON_POINT_BASED.items()])
+    _POINT_NAMES = "\n".join([f"{k}: {v.NAME}" for k,v in _POINT_BASED.items()])
+    _EXTENSION_NAMES = "\n".join([f"x{k}: Extend previous point-based transform with '{v.NAME}'" for k,v in _POINT_BASED.items()])
+    _CONVERSION_NAMES = "\n".join([f"c{k}: Convert previous point-based transform to '{v.NAME}'" for k,v in _POINT_BASED.items()])
+    _TEXT = f"""Please choose an option:
+
+Parametric transforms
+---------------------
+{_PARAMETRIC_NAMES}
+
+Point-based transforms
+----------------------
+{_POINT_NAMES}
+
+Extensions
+----------
+{_EXTENSION_NAMES}
+{_CONVERSION_NAMES}
+
+Other
+-----
+f: flip along z axis
+e: edit current transform
+z: remove the top transform
+u: revert most recent change
+d: toggle references on/off
+s: save to graph (but not to disk)
+S: save to graph and write to disk
+q: quit
+"""
+    # Ensure we passed lists
+    if not isinstance(nodes_movable, (list, tuple)):
+        nodes_movable = [nodes_movable]
+    if not isinstance(nodes_fixed, (list, tuple)):
+        nodes_fixed = [nodes_fixed]
+    # Iteratively generate the reference images and transforms
+    refs = []
+    for r in references:
+        if isinstance(r, str) and graph is not None:
+            refs.append((graph.get_image(r), graph.get_transform(r, nodes_fixed[0])))
+        else:
+            assert isinstance(r, tuple) and len(r) == 2 and isinstance(r[0], np.ndarray) and isinstance(r[1], Transform), "Each reference must be a tuple, where the first element is an image as an ndarray and the second is a Transform.  Alternatively, a reference can be the node name in the Graph (if applicable)."
+            refs.append(r)
+    # Parse the starting transform, falling back to Identity
+    if start is None:
+        try: # If we have a graph and there is a link between the nodes
+            t = graph.get_transform(nodes_movable[0], nodes_fixed[0])
+            print("Using existing transform as a starting place")
+        except (AssertionError, NameError, RuntimeError, AttributeError):
+            t = Identity()
+    elif isinstance(start, str) and graph is not None:
+        t = graph.get_transform(start, nodes_fixed[0])
+        while not isinstance(t, AffineTransform): # Use only the linear portion
+            print("Warning: removing nonlinear portion of starting transform.")
+            t = t.pretransform()
+        #refs.append((g.get_image(start), t))
+    elif isinstance(start, Transform): # start is a transform
+        t = start
+    else:
+        raise ValueError("Invalid starting transform")
+    info = _TEXT
+    # Remove save options if we don't have a graph
+    if graph is None: 
+        info = "\n".join([l for l in info.split("\n") if l[0:3].lower() != "s: "])
+    # Put all of the pre-images and post-images into the same space.  Currently only supported for graphs.
+    if graph is not None and isinstance(nodes_movable[0], str):
+        nodes_movable_img = tuple(graph.get_image(n) if n == nodes_movable[0] else graph.get_transform(n, nodes_movable[0]).transform_image(graph.get_image(n), relative=graph.get_image(nodes_movable[0]).shape, force_size=True) for n in nodes_movable)
+    else:
+        nodes_movable_img = tuple(nodes_movable)
+    if graph is not None and isinstance(nodes_fixed[0], str):
+        nodes_fixed_img = tuple(graph.get_image(n) if n == nodes_fixed[0] else graph.get_transform(n, nodes_fixed[0]).transform_image(graph.get_image(n), relative=graph.get_image(nodes_fixed[0]).shape, force_size=True) for n in nodes_fixed)
+    else:
+        nodes_fixed_img = tuple(nodes_fixed)
+    t_hist = [] # History of transforms, for undo history
+    while True:
+        print(f"Current transform is: {t}\n")
+        t_hist.append(t)
+        print(info)
+        resp = input(f"Your choice: ")
+        if len(resp) == 0:
+            t = t_hist.pop()
+            continue
+        if resp[0] in _TRANSFORMS_FOR_INTERACTIVE.keys():
+            ttype = _TRANSFORMS_FOR_INTERACTIVE[resp]
+            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t+ttype, references=refs) 
+        elif resp[0] == "e":
+            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs) 
+        elif resp[0] in "cx" and len(resp) > 1 and resp[1] in _POINT_BASED.keys():
+            if resp[0] == "x":
+                t = refine_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
+            elif resp[0] == "c":
+                t = replace_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
+            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs) 
+        elif resp == "f":
+            t = FlipFixed(z=True, zthickness=nodes_movable_img[0].shape[0]) + t
+        elif resp == "d":
+            if len(refs) > 0:
+                _refs = refs
+                refs = []
+                print("Refs toggled off")
+            else:
+                try:
+                    refs = _refs
+                    print("Refs toggled on")
+                except UnboundLocalError:
+                    print("No references to toggle")
+        elif resp == "u":
+            if len(t_hist) > 1:
+                t_hist.pop()
+            else:
+                print("No more history to undo")
+            t = t_hist.pop()
+        elif resp == "z":
+            t = t.pretransform()
+        elif resp in "sS" and graph is not None:
+            try:
+                graph.add_edge(nodes_movable[0], nodes_fixed[0], t)
+            except AssertionError:
+                print("Edge already exists, overwriting")
+                graph.add_edge(nodes_movable[0], nodes_fixed[0], t, update=True)
+            if resp == "S":
+                graph.save()
+        elif resp == "q":
+            break
+        else:
+            t = t_hist.pop()
+            print("Invalid choice '{resp}'")
+        # Match individual points/cells
+    print("Transform is:", t)
+    return t
+
+def refine_transform(transform, transformtype, **kwargs):
+    start = transform.transform(transform.pretransform().invert().transform(transform.points_start))
+    end = transform.points_end
+    return transform + transformtype(points_start=start, points_end=end, **kwargs)
+
+def replace_transform(transform, transformtype, **kwargs):
+    return transform.pretransform() + transformtype(points_start=transform.points_start, points_end=transform.points_end, **kwargs)

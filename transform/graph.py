@@ -172,7 +172,6 @@ class TransformGraph:
             candidates.extend(to_append)
         raise RuntimeError(f"Path from '{frm}' to '{to}' not found")
     def get_image(self, node):
-        print("Getting image", node)
         if node not in self.node_images.keys():
             if len(self.compressed_node_images[node][1]) == 0: # First element is a string of a node
                 imnode = str(self.compressed_node_images[node][0])
