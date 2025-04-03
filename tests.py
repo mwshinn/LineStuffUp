@@ -3,14 +3,22 @@ import tempfile
 from pathlib import Path
 import numpy as np
 
-_FIXED_TRANSFORMS = [TranslateRotateFixed, TranslateRotateFixed, TranslateFixed, Identity, Rescale, ShearFixed]
-_FIXED_TRANSFORMS_PARAMS = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=10, xrotate=20), dict(z=3.2, y=0, x=-24, zrotate=3.4, yrotate=10, xrotate=25), dict(z=-10, y=.3, x=4), dict(), dict(z=2, y=4, x=3), dict(yzshear=.3, xzshear=-.2, xyshear=.1)]
+TEST_SLOW_TRANSFORMS = False
+
+_FIXED_TRANSFORMS = [TranslateRotateFixed, TranslateRotateFixed, TranslateFixed, Identity, Rescale, ShearFixed, FlipFixed, TranslateRotateRescaleFixed]
+_FIXED_TRANSFORMS_PARAMS = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=10, xrotate=20), dict(z=3.2, y=0, x=-24, zrotate=3.4, yrotate=10, xrotate=25), dict(z=-10, y=.3, x=4), dict(), dict(z=2, y=4, x=3), dict(yzshear=.3, xzshear=-.2, xyshear=.1), dict(z=True, zthickness=30), dict(xscale=1.2, yscale=.9, zscale=1.4, xrotate=3, yrotate=2, zrotate=10, x=10, y=-8, z=5)]
 FIXED_TRANSFORMS = [t(**tp) for t,tp in zip(_FIXED_TRANSFORMS, _FIXED_TRANSFORMS_PARAMS)]
-_POINT_TRANSFORMS = [TranslateRotate, Translate, TranslateRotate2D, Triangulation]
-_POINT_TRANSFORMS_SLOW = [DistanceWeightedAverage]
+_POINT_TRANSFORMS = [TranslateRotate, Translate, TranslateRotate2D, TranslateRotateRescale, Triangulation]
+_POINT_TRANSFORMS_2D = [Triangulation2D, TranslateRotateRescaleByPlane]
+_POINT_TRANSFORMS_SLOW = [DistanceWeightedAverage] if TEST_SLOW_TRANSFORMS else []
+points_pre_flat = np.random.rand(20,3)
+points_pre_flat[:,1:3] *= 150
+points_pre_flat[:,0] *= 10
+points_post_flat = points_pre_flat@rotation_matrix(2,3,-2)-4
+POINT_TRANSFORMS_2D = [t(points_pre_flat, points_post_flat) for t in _POINT_TRANSFORMS_2D]
 points_pre = np.random.randn(50,3)
 points_post = points_pre@rotation_matrix(4,6,2)-9
-POINT_TRANSFORMS = [t(points_pre, points_post) for t in _POINT_TRANSFORMS]
+POINT_TRANSFORMS = [t(points_pre, points_post) for t in _POINT_TRANSFORMS] + POINT_TRANSFORMS_2D
 POINT_TRANSFORMS_SLOW = [t(points_pre, points_post) for t in _POINT_TRANSFORMS_SLOW]
 
 ALL_TRANSFORMS = FIXED_TRANSFORMS + POINT_TRANSFORMS

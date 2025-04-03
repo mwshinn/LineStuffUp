@@ -341,9 +341,10 @@ class TranslateRotateRescaleByPlane(AffineTransform,PointTransform):
     We do not want to perform a linear regression from starting points to ending
     points as in TranslateRotateRescale, because this can cause some gnarly skew
     due to the difference in point spacing in the thin dimension compared to the
-    thicker dimensions.  So, this performs PCA, and then performs two
-    regressions: one for the two high variance dimensions, and another
-    separately for the lowest-variance dimension.
+    thicker dimensions.  So, this finds a 2D plane (two high-variance
+    dimensions) that maximises shared variance between the point clouds, and
+    then performs two regressions: one for the two high variance dimensions, and
+    another separately for the lowest-variance dimension.
 
     """
     NAME = "Translate, rotate, and rescale along a plane"
@@ -548,7 +549,7 @@ class Triangulation(PointTransform):
     to each.
     """
     NAME = "Nonlinear 3D triangulation"
-    SHORTCUT_KEY = "L"
+    SHORTCUT_KEY = "V"
     SORT_WEIGHT = 100
     DEFAULT_PARAMETERS = {"invert": True} # Start with inverted because inverted is slower for points and faster for images
     def _fit(self):
@@ -619,16 +620,23 @@ class Triangulation(PointTransform):
 class Triangulation2D(PointTransform):
     """Using a mesh/triangulation to deform the volume in two dimensions.
 
+    This is the recommended nonlinear transform for any image that looks like a
+    pancake (flat but not extremely thin).
+
+    If the components of the normal vector are all zero, the normal vector will
+    be detected automatically.  
+
     This uses a Delaunay triangulation for the inverse transform.  Because scipy
     does not support using an arbitrary triangulation here, we manually iterate
     through to determine containment of a point in each simplex instead of using
     the built-in scipy function.  Then, we apply the relevant linear transform
     to each.
+
     """
     NAME = "Nonlinear projected triangulation"
     SHORTCUT_KEY = "N"
     SORT_WEIGHT = 99
-    DEFAULT_PARAMETERS = {"invert": True, "normal_z": 1.0, "normal_y": 0.0, "normal_x": 0.0} # Start with inverted because inverted is slower for points and faster for images
+    DEFAULT_PARAMETERS = {"invert": True, "normal_z": 0.0, "normal_y": 0.0, "normal_x": 0.0} # Start with inverted because inverted is slower for points and faster for images
     def _fit(self):
         # To avoid out of bounds, we add a few pseudo points.  We do this by
         # finding the convex hull, centering it, and scaling it, and then
@@ -643,9 +651,16 @@ class Triangulation2D(PointTransform):
         else:
             before = self.points_start
             after = self.points_end
+        # Automatically find the normal if it wasn't manually specified
+        if self.params['normal_z'] == 0 and self.params['normal_y'] == 0 and self.params['normal_x'] == 0:
+            demeaned_before = before - np.mean(before, axis=0)
+            U,S,V = np.linalg.svd(demeaned_before.T @ demeaned_before)
+            assert np.all(np.sort(S)[::-1] == S), "SVD is not sorted correctly"
+            self.normal = U[:,2]
+        else:
+            self.normal = np.asarray([self.params["normal_z"], self.params["normal_y"], self.params["normal_x"]])
+            self.normal /= np.sqrt(np.sum(np.square(self.normal)))
         # Find two vectors to form the basis for the plane.  Suffix "B" to indicate we are in this basis
-        self.normal = np.asarray([self.params["normal_z"], self.params["normal_y"], self.params["normal_x"]])
-        self.normal /= np.sqrt(np.sum(np.square(self.normal)))
         vec1 = np.asarray([1., 0, 0]) if np.asarray([1., 0, 0]) @ self.normal < .99 else np.asarray([0, 1., 0]) # Can be any vector in a different direction than the normal, these are a bit easier to interpret
         vec1 -= (vec1 @ self.normal) * self.normal
         vec1 /= np.sqrt(np.sum(np.square(vec1)))
@@ -798,7 +813,7 @@ def compose_transforms(a, b):
     # Skip for the identity transform
     if isinstance(a, Identity):
         return b
-    if b is Identity or isinstance(b, Identity):
+    if isinstance(b, Identity):
         return a
     # Special cases for linear and for adding to a class (not yet fitted)
     if isinstance(a, Transform) and isinstance(b, Transform):
@@ -814,6 +829,10 @@ def compose_transforms(a, b):
             class ComposedPartialAffine(AffineTransform,inherit):
                 DEFAULT_PARAMETERS = b.DEFAULT_PARAMETERS # b.params # Changed from b.DEFAULT_PARAMETERS
                 GUI_DRAG_PARAMETERS = b.GUI_DRAG_PARAMETERS
+                def __new__(cls, *args, **kwargs): # Strip identity if necessary
+                    if b is Identity:
+                        return a
+                    return super(ComposedPartialAffine, cls).__new__(cls)
                 def __init__(self, points_start=None, points_end=None, *args, **kwargs):
                     extra_args = {}
                     if points_start is not None and points_end is not None:
@@ -822,6 +841,8 @@ def compose_transforms(a, b):
                     self.b_type = b
                     self.b = b(*args, **kwargs, **extra_args)
                     super().__init__(*args, **kwargs, **extra_args)
+                    if self.b_type is Identity:
+                        self = self.a
                 def _fit(self):
                     self.matrix = a.matrix @ self.b.matrix
                     self.shift = a.shift @ self.b.matrix + self.b.shift
@@ -837,6 +858,10 @@ def compose_transforms(a, b):
             class ComposedPartial(inherit):
                 DEFAULT_PARAMETERS = b.DEFAULT_PARAMETERS #  b.params # Changed from b.DEFAULT_PARAMETERS
                 GUI_DRAG_PARAMETERS = b.GUI_DRAG_PARAMETERS
+                def __new__(cls, *args, **kwargs): # Strip identity if necessary
+                    if b is Identity:
+                        return a
+                    return super(ComposedPartial, cls).__new__(cls)
                 def __init__(self, points_start=None, points_end=None, *args, **kwargs):
                     extra_args = {}
                     if points_start is not None and points_end is not None:

@@ -95,7 +95,7 @@ def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=Fal
         references = [(g.get_image(r), g.get_transform(r, base[0])) for r in references] 
     return alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type, references=references)
 
-def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, downsample=None, references=[], crop=False, auto_find_peak_radius=2):
+def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, downsample=None, references=[], crop=False, auto_find_peak_radius=2, label_base=False):
     """Align images
 
     If `base_image` and/or `movable_image` are tuples, they will be interpreted
@@ -137,7 +137,10 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
     base_points = [] if initial_base_points is None else list(initial_base_points)
     movable_points = [] if initial_movable_points is None else list(initial_movable_points)
     tform_type = transform_type
-    layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0]), scale=(bi.scale if isinstance(bi, ndarray_shifted) else [1, 1, 1])) for bi in base_image]
+    if label_base:
+        layers_base = [v.add_labels(bi, name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0]), scale=(bi.scale if isinstance(bi, ndarray_shifted) else [1, 1, 1])) for bi in base_image]
+    else:
+        layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0]), scale=(bi.scale if isinstance(bi, ndarray_shifted) else [1, 1, 1])) for bi in base_image]
     layers_movable = [v.add_image(tform.transform_image(mi, relative=rel, labels=utils.image_is_label(mi), downsample=downsample), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi, relative=rel)[0], scale=downsample) for mi in movable_image]
     layers_reference = [v.add_image(rt.transform_image(ri, relative=rel, labels=utils.image_is_label(ri), downsample=downsample), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, relative=rel)[0], scale=downsample) for i,(ri,rt) in enumerate(references)]
     if is_point_transform:
@@ -193,7 +196,7 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
             if e.type != "mouse_press":
                 return
             # If right click, find the nearby peak
-            if e.button == 2: # Right click
+            if e.button == 2 and not label_base: # Right click
                 try:
                     pos = find_local_maximum(best_layer(layers_base).data, e.position)
                 except RecursionError:
@@ -222,7 +225,10 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
             # If right click, find the nearby peak
             if e.button == 2: # Right click
                 bl = best_layer(layers_movable)
-                pos = find_local_maximum(bl.data, e.position - bl.translate) + bl.translate
+                try:
+                    pos = find_local_maximum(bl.data, e.position - bl.translate) + bl.translate
+                except RecursionError:
+                    pos = e.position
             else:
                 pos = e.position
             # Step 3a: Process movable layer click
@@ -399,7 +405,7 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
     print(tform)
     return tform
 
-def align_interactive(nodes_movable, nodes_fixed, graph=None, start=None, references=[]):
+def align_interactive(nodes_movable, nodes_fixed, graph=None, start=None, references=[], label_base=False):
     _TRANSFORMS_FOR_INTERACTIVE = {}
     _queue = Transform.__subclasses__()
     _reserved = "fezudsSqxc"
@@ -502,15 +508,15 @@ q: quit
             continue
         if resp[0] in _TRANSFORMS_FOR_INTERACTIVE.keys():
             ttype = _TRANSFORMS_FOR_INTERACTIVE[resp]
-            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t+ttype, references=refs) 
+            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t+ttype, references=refs, label_base=label_base) 
         elif resp[0] == "e":
-            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs) 
+            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs, label_base=label_base) 
         elif resp[0] in "cx" and len(resp) > 1 and resp[1] in _POINT_BASED.keys():
             if resp[0] == "x":
                 t = refine_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
             elif resp[0] == "c":
                 t = replace_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
-            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs) 
+            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs, label_base=label_base) 
         elif resp == "f":
             t = FlipFixed(z=True, zthickness=nodes_movable_img[0].shape[0]) + t
         elif resp == "d":
