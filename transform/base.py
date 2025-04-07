@@ -462,7 +462,7 @@ class TranslateRotateFixed(AffineTransform,Transform):
         self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
     def invert(self):
         newzyx = [self.params["z"], self.params["y"], self.params["x"]] @ self.matrix.T
-        return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], invert=True)
+        return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], invert=(not self.params['invert']))
 
 class TranslateRotateRescaleFixed(AffineTransform,Transform):
     NAME = "Translate, rotate, and rescale"
@@ -477,7 +477,7 @@ class TranslateRotateRescaleFixed(AffineTransform,Transform):
         self.shift = np.asarray([-self.params["z"], -self.params["y"], -self.params["x"]])
     def invert(self):
         newzyx = [self.params["z"], self.params["y"], self.params["x"]] @ np.linalg.inv(self.matrix)
-        return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], zscale=self.params["zscale"], yscale=self.params["yscale"], xscale=self.params["xscale"], invert=True)
+        return self.__class__(zrotate=self.params["zrotate"], yrotate=self.params["yrotate"], xrotate=self.params["xrotate"], z=-newzyx[0], y=-newzyx[1], x=-newzyx[2], zscale=self.params["zscale"], yscale=self.params["yscale"], xscale=self.params["xscale"], invert=(not self.params['invert']))
 
 class TranslateRotateRescale2DFixed(AffineTransform,Transform): # Deprecated
     DEFAULT_PARAMETERS = {"y": 0.0, "x": 0.0, "rotate": 0.0, "scale": 1.0}
