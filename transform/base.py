@@ -747,67 +747,67 @@ class DistanceWeightedAverageGaussian(PointTransformNoInverse): # Deprecated
         pos /= (baseline[:,None] + epsilon)
         return points + pos
 
-import numba
-class DistanceWeightedAverage(PointTransformNoInverse):
-    """Implements a weighted average according to inverse sequare distance.
+# import numba
+# class DistanceWeightedAverage(PointTransformNoInverse):
+#     """Implements a weighted average according to inverse sequare distance.
 
-    The code here is highly optimised for speed, and is really hard to decipher.
-    The equation is:
+#     The code here is highly optimised for speed, and is really hard to decipher.
+#     The equation is:
 
-        \\sum_i v_i/w_i + \\epsilon \\bar{v}
-        -----------------------------------
-                     w_i
+#         \\sum_i v_i/w_i + \\epsilon \\bar{v}
+#         -----------------------------------
+#                      w_i
 
-    where w_i = 1/(d_i^2 + \\epsilon), d is the distance of the test point to the
-    point i, and v_i is the end minus the start for point pair i, where \\bar{v}
-    is the mean across all points.
+#     where w_i = 1/(d_i^2 + \\epsilon), d is the distance of the test point to the
+#     point i, and v_i is the end minus the start for point pair i, where \\bar{v}
+#     is the mean across all points.
 
-    I think it might be a bug to have the epsilon multiplied by \\bar{v} (this
-    makes it essentially always zero), and instead I actually want the same term
-    in the denominator as well, but it works so who cares.
+#     I think it might be a bug to have the epsilon multiplied by \\bar{v} (this
+#     makes it essentially always zero), and instead I actually want the same term
+#     in the denominator as well, but it works so who cares.
 
-    """
-    NAME = "Nonlinear distance weighted average"
-    DEFAULT_PARAMETERS = {"invert": False}
-    @staticmethod
-    @numba.jit(nopython=True, parallel=True)
-    def _loop(points, points_start, points_end, epsilon):
-        baseline = np.zeros_like(points[:,0])
-        pos = np.zeros_like(points)
-        sumsquare = np.sum(np.square(points), axis=1)
-        for i in range(0, len(points_start)):
-            dist = 1/(sumsquare - 2*points[:,0]*points_start[i][0] - 2*points[:,1]*points_start[i][1] - 2*points[:,2]*points_start[i][2] + (np.sum(np.square(points_start[i]))+epsilon))
-            baseline += dist
-            for j in range(0, 3):
-                pos[:,j] += dist*(points_end[i][j]-points_start[i][j])
-        return pos,baseline
-    def _transform(self, points, points_start, points_end):
-        if points.shape[0] > 20:
-            print("Array transform")
-            return self._transform_array(points, points_start, points_end)
-        #_t = time.time()
-        points = np.asarray(points, dtype="float")
-        baseline = np.zeros_like(points[:,0])
-        pos = np.zeros_like(points)
-        epsilon = 1e-200 # For numerical stability
-        sumsquare = np.sum(np.square(points), axis=1)
-        for i in range(0, len(points_start)):
-            dist = 1/(sumsquare - 2*points[:,0]*points_start[i][0] - 2*points[:,1]*points_start[i][1] - 2*points[:,2]*points_start[i][2] + (np.sum(np.square(points_start[i]))+epsilon))
-            baseline += dist
-            for j in range(0, 3):
-                pos[:,j] += dist*(points_end[i][j]-points_start[i][j])
-        pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
-        pos /= baseline[:,None]
-        #print("Time:", time.time()-_t)
-        return points + pos
-    def _transform_array(self, points, points_start, points_end):
-        #_t = time.time()
-        points = np.asarray(points, dtype="float", order="F")
-        epsilon = 1e-200 # For numerical stability
-        pos,baseline = self._loop(points, points_start, points_end, epsilon)
-        pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
-        pos /= baseline[:,None]
-        return points + pos
+#     """
+#     NAME = "Nonlinear distance weighted average"
+#     DEFAULT_PARAMETERS = {"invert": False}
+#     @staticmethod
+#     @numba.jit(nopython=True, parallel=True)
+#     def _loop(points, points_start, points_end, epsilon):
+#         baseline = np.zeros_like(points[:,0])
+#         pos = np.zeros_like(points)
+#         sumsquare = np.sum(np.square(points), axis=1)
+#         for i in range(0, len(points_start)):
+#             dist = 1/(sumsquare - 2*points[:,0]*points_start[i][0] - 2*points[:,1]*points_start[i][1] - 2*points[:,2]*points_start[i][2] + (np.sum(np.square(points_start[i]))+epsilon))
+#             baseline += dist
+#             for j in range(0, 3):
+#                 pos[:,j] += dist*(points_end[i][j]-points_start[i][j])
+#         return pos,baseline
+#     def _transform(self, points, points_start, points_end):
+#         if points.shape[0] > 20:
+#             print("Array transform")
+#             return self._transform_array(points, points_start, points_end)
+#         #_t = time.time()
+#         points = np.asarray(points, dtype="float")
+#         baseline = np.zeros_like(points[:,0])
+#         pos = np.zeros_like(points)
+#         epsilon = 1e-200 # For numerical stability
+#         sumsquare = np.sum(np.square(points), axis=1)
+#         for i in range(0, len(points_start)):
+#             dist = 1/(sumsquare - 2*points[:,0]*points_start[i][0] - 2*points[:,1]*points_start[i][1] - 2*points[:,2]*points_start[i][2] + (np.sum(np.square(points_start[i]))+epsilon))
+#             baseline += dist
+#             for j in range(0, 3):
+#                 pos[:,j] += dist*(points_end[i][j]-points_start[i][j])
+#         pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
+#         pos /= baseline[:,None]
+#         #print("Time:", time.time()-_t)
+#         return points + pos
+#     def _transform_array(self, points, points_start, points_end):
+#         #_t = time.time()
+#         points = np.asarray(points, dtype="float", order="F")
+#         epsilon = 1e-200 # For numerical stability
+#         pos,baseline = self._loop(points, points_start, points_end, epsilon)
+#         pos += np.mean(points_end-points_start, axis=0, keepdims=True)*epsilon
+#         pos /= baseline[:,None]
+#         return points + pos
 
 def compose_transforms(a, b):
     # Skip for the identity transform
