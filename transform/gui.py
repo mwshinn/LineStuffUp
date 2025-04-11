@@ -144,8 +144,8 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
     layers_movable = [v.add_image(tform.transform_image(mi, relative=rel, labels=utils.image_is_label(mi), downsample=downsample), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi, relative=rel)[0], scale=downsample) for mi in movable_image]
     layers_reference = [v.add_image(rt.transform_image(ri, relative=rel, labels=utils.image_is_label(ri), downsample=downsample), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, relative=rel)[0], scale=downsample) for i,(ri,rt) in enumerate(references)]
     if is_point_transform:
-        layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
-        layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, 1, .6, 1])
+        layer_base_points = v.add_points(None, ndim=3, name="base points", border_width=0, face_color=[1, .6, .6, 1])
+        layer_movable_points = v.add_points(None, ndim=3, name="movable points", border_width=0, face_color=[.6, 1, .6, 1])
         layer_base_points.data = base_points
         layer_movable_points.data = movable_points
         layer_base_points.editable = False
