@@ -545,6 +545,10 @@ q: quit
                 print("Edge already exists, overwriting")
                 graph.add_edge(nodes_movable[0], nodes_fixed[0], t, update=True)
             if resp == "S":
+                if graph.filename is None:
+                    print("Graph has no specified filename, please enter one...")
+                    filename = input("Filename (eg my_graph): ")
+                    graph.filename = filename
                 graph.save()
         elif resp == "q":
             break
