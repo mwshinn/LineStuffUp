@@ -101,7 +101,7 @@ class Transform:
         return self.invert().transform(points)
     def invert(self):
         raise NotImplementedError("Please subclass and replace")
-    def origin_and_maxpos(self, img, relative=True, force_size=False):
+    def origin_and_maxpos(self, img, relative=True, force_size=True):
         """When using relative mode for image transformation, find the corners of the bounds based on the input image size"""
         input_bounds = img.shape
         origin_offset = img.origin if isinstance(img, ndarray_shifted) else [0,0,0]
@@ -134,7 +134,7 @@ class Transform:
         else:
             raise ValueError(f"Invalid value of `relative` passed: {relative}")
         return origin,maxpos
-    def transform_image(self, img, relative=True, labels=False, downsample=None, force_size=False):
+    def transform_image(self, img, relative=True, labels=False, downsample=None, force_size=True):
         """Generic non-rigid transformation for images.
 
         Apply the transformation to image `img`.  `pad` is the number of pixels
@@ -261,7 +261,7 @@ class AffineTransform:
     """
     def _transform(self, points):
         return points @ self.matrix - self.shift
-    def transform_image(self, image, relative=True, labels=False, downsample=None, force_size=False):
+    def transform_image(self, image, relative=True, labels=False, downsample=None, force_size=True):
         # Optimisation for the case where no image transform needs to be
         # performed.
         # TODO Doesn't work if input image is downsampled or shifted

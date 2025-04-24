@@ -141,8 +141,8 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
         layers_base = [v.add_labels(bi, name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0]), scale=(bi.scale if isinstance(bi, ndarray_shifted) else [1, 1, 1])) for bi in base_image]
     else:
         layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0]), scale=(bi.scale if isinstance(bi, ndarray_shifted) else [1, 1, 1])) for bi in base_image]
-    layers_movable = [v.add_image(tform.transform_image(mi, relative=rel, labels=utils.image_is_label(mi), downsample=downsample), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi, relative=rel)[0], scale=downsample) for mi in movable_image]
-    layers_reference = [v.add_image(rt.transform_image(ri, relative=rel, labels=utils.image_is_label(ri), downsample=downsample), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, relative=rel)[0], scale=downsample) for i,(ri,rt) in enumerate(references)]
+    layers_movable = [v.add_image(tform.transform_image(mi, relative=rel, labels=utils.image_is_label(mi), downsample=downsample, force_size=False), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi, relative=rel, force_size=False)[0], scale=downsample) for mi in movable_image]
+    layers_reference = [v.add_image(rt.transform_image(ri, relative=rel, labels=utils.image_is_label(ri), downsample=downsample, force_size=False), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, relative=rel, force_size=False)[0], scale=downsample) for i,(ri,rt) in enumerate(references)]
     if is_point_transform:
         layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
         layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, 1, .6, 1])
@@ -317,15 +317,15 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
             # AffineTransforms only to avoid rerending the image if only the
             # origin/translation has changed.
             if force or _prev_matrix is None or (not isinstance(tform, AffineTransform)) or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
-                layer_movable.data = tform.transform_image(mi, relative=rel, labels=utils.image_is_label(mi), downsample=downsample)
-                layer_movable.translate = tform.origin_and_maxpos(mi, relative=rel)[0]
+                layer_movable.data = tform.transform_image(mi, relative=rel, labels=utils.image_is_label(mi), downsample=downsample, force_size=False)
+                layer_movable.translate = tform.origin_and_maxpos(mi, relative=rel, force_size=False)[0]
             else:
                 # This is complicated due to the possibilty of dragging a cropped image out of the crop boundaries
                 layer_movable.translate = _prev_translate - tform.shift
             layer_movable.refresh()
         if isinstance(tform, AffineTransform) and (np.any(_prev_matrix != tform.matrix) or force):
             _prev_matrix = tform.matrix
-            _prev_translate = tform.origin_and_maxpos(mi, relative=rel)[0] + tform.shift
+            _prev_translate = tform.origin_and_maxpos(mi, relative=rel, force_size=False)[0] + tform.shift
         for b in buttons: # Turn buttons back on when transform is done
             b.enabled = True
     def set_point_size(zoom=None):
