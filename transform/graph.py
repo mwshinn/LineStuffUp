@@ -5,72 +5,221 @@ from . import utils
 import os
 import tempfile
 
+
 class TransformGraph:
     def __init__(self, name):
         # NOTE: If you change the constructor or internal data structure, you also need to change the load and save methods.
         self.name = name
         self.nodes = [] # List of node names
         self.edges = {} # Dictionary of dictonaries, edges[node1][node2] = transform
-        self.node_images = {} # If node has an associated image, node name is key and image is value
-        self.compressed_node_images = {} # If a node has an associated image, the compressed version is stored here and loaded dynamically into node_images
+        
+        # node_images is a cache. It can contain:
+        # - an ndarray if the image is loaded.
+        # - None if the image exists in the DB but is not loaded.
+        # - a 'ref:other_node' string if it's a reference to another node.
+        # Keys are all nodes that have an associated image.
+        self.node_images = {} 
+
+        # compressed_node_images stores "dirty" images that need to be saved to the database.
+        # Format: {node_name: (compressed_data, info)} for image data
+        #      or {node_name: (ref_node_name, [])} for a reference
+        self.compressed_node_images = {}
+        
         self.node_notes = {}
         self.filename = None
         self.metadata = None
+
     def __eq__(self, other):
-        return (self.name == other.name) and \
-            self.nodes == other.nodes and \
-            self.edges == other.edges and \
-            len(self.compressed_node_images) == len(other.compressed_node_images) and \
-            all(np.allclose(self.compressed_node_images[ni1][0],other.compressed_node_images[ni2][0]) for ni1,ni2 in zip(self.compressed_node_images.keys(), other.compressed_node_images.keys()))
+        # NOTE: This equality check does not compare image data for performance reasons.
+        # It only checks if the same nodes have images.
+        return (isinstance(other, TransformGraph) and
+                self.name == other.name and
+                self.nodes == other.nodes and
+                self.edges == other.edges and
+                set(self.node_images.keys()) == set(other.node_images.keys()))
+
     def save(self, filename=None):
         if filename is None:
             filename = self.filename
-        # Note to future self: If I ende up not using image arrays, I could rewrite this to save in text format.
-        node_images_keys = list(sorted(self.compressed_node_images.keys()))
-        node_images_values = [self.compressed_node_images[k] for k in node_images_keys]
-        node_image_arrays_compressed = {f"nodeimage_{i}": node_images_values[i][0] for i in range(0, len(node_images_values))}
-        node_image_arrays_info = {f"nodeimageinfo_{i}": node_images_values[i][1] for i in range(0, len(node_images_values))}
-        np.savez_compressed(filename, name=self.name, nodes=self.nodes, nodeimage_keys=node_images_keys, **node_image_arrays_compressed, **node_image_arrays_info, edges=repr(self.edges), notes=repr(self.node_notes), metadata=repr(self.metadata))
+        if filename is None:
+            raise ValueError("Filename must be provided to save.")
+
+        self.filename = filename
+        
+        con = sqlite3.connect(filename)
+        cur = con.cursor()
+
+        cur.execute("PRAGMA foreign_keys = ON;")
+
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS graph_properties (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS nodes (
+                name TEXT PRIMARY KEY
+            )
+        ''')
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS node_images (
+                node_name TEXT PRIMARY KEY,
+                data BLOB,
+                info TEXT,
+                ref_node TEXT,
+                FOREIGN KEY(node_name) REFERENCES nodes(name) ON DELETE CASCADE
+            )
+        ''')
+
+        cur.execute("BEGIN")
+        try:
+            properties = {
+                'name': self.name,
+                'edges': repr(self.edges),
+                'notes': repr(self.node_notes),
+                'metadata': repr(self.metadata)
+            }
+            cur.executemany("INSERT OR REPLACE INTO graph_properties VALUES (?, ?)", properties.items())
+
+            cur.execute("SELECT name FROM nodes")
+            db_nodes = {row[0] for row in cur.fetchall()}
+            current_nodes = set(self.nodes)
+
+            nodes_to_delete = db_nodes - current_nodes
+            if nodes_to_delete:
+                cur.executemany("DELETE FROM nodes WHERE name = ?", [(n,) for n in nodes_to_delete])
+
+            nodes_to_add = current_nodes - db_nodes
+            if nodes_to_add:
+                cur.executemany("INSERT OR IGNORE INTO nodes (name) VALUES (?)", [(n,) for n in nodes_to_add])
+
+            cur.execute("SELECT node_name FROM node_images")
+            db_image_nodes = {row[0] for row in cur.fetchall()}
+            current_image_nodes = set(self.node_images.keys())
+            
+            image_entries_to_delete = db_image_nodes - current_image_nodes
+            if image_entries_to_delete:
+                 cur.executemany("DELETE FROM node_images WHERE node_name = ?", [(n,) for n in image_entries_to_delete])
+
+            for node_name, compressed_value in self.compressed_node_images.items():
+                if isinstance(compressed_value[0], str) and compressed_value[1] == []: # Reference node
+                    ref_node = compressed_value[0]
+                    cur.execute(
+                        "INSERT OR REPLACE INTO node_images (node_name, data, info, ref_node) VALUES (?, NULL, NULL, ?)",
+                        (node_name, ref_node)
+                    )
+                else:  # Actual image data
+                    data, info = compressed_value
+                    # ***FIX***: Convert numpy array to bytes for sqlite BLOB storage.
+                    cur.execute(
+                        "INSERT OR REPLACE INTO node_images (node_name, data, info, ref_node) VALUES (?, ?, ?, NULL)",
+                        (node_name, data.tobytes(), json.dumps(info))
+                    )
+            
+            con.commit()
+            self.compressed_node_images.clear()
+
+        except Exception:
+            con.rollback()
+            raise
+        finally:
+            con.close()
+
     @classmethod
     def load(cls, filename):
-        f = np.load(filename)
+        if not os.path.exists(filename):
+            raise FileNotFoundError(f"No such file or directory: '{filename}'")
+        if filename.endswith(".npz"):
+            return cls._load_npz_and_convert(filename)
+        return cls._load_sqlite(filename)
+    @classmethod
+    def _load_sqlite(cls, filename):
+        con = sqlite3.connect(f'file:{filename}?mode=ro', uri=True)
+        cur = con.cursor()
+        try:
+            cur.execute("SELECT value FROM graph_properties WHERE key = 'name'")
+            name = cur.fetchone()[0]
+            g = cls(name)
+            g.filename = filename
+
+            cur.execute("SELECT key, value FROM graph_properties")
+            props = dict(cur.fetchall())
+
+            g.edges = eval(props['edges'], transform.__dict__, transform.__dict__)
+            g.node_notes = eval(props.get('notes', '{}'))
+            g.metadata = eval(props.get('metadata', 'None'))
+
+            cur.execute("SELECT name FROM nodes")
+            g.nodes = [row[0] for row in cur.fetchall()]
+
+            cur.execute("SELECT node_name, ref_node FROM node_images")
+            for node_name, ref_node in cur.fetchall():
+                if ref_node is not None:
+                    g.node_images[node_name] = f"ref:{ref_node}"
+                else:
+                    g.node_images[node_name] = None
+        finally:
+            con.close()
+        return g
+
+    @classmethod
+    def _load_npz_and_convert(cls, filename):
+        print(f"Loading legacy NPZ file: {filename}. It will be converted to the new SQLite format.")
+        f = np.load(filename, allow_pickle=True)
         g = cls(str(f['name']))
+
         g.nodes = list(map(str, f['nodes']))
         g.edges = eval(str(f['edges']), transform.__dict__, transform.__dict__)
-        for i,n in enumerate(f['nodeimage_keys']):
-            n = str(n)
-            g.compressed_node_images[n] = (f[f'nodeimage_{i}'], f[f'nodeimageinfo_{i}'])
         if "notes" in f.keys():
             g.node_notes = eval(str(f['notes']))
         if "metadata" in f.keys():
             g.metadata = eval(str(f['metadata']))
-        g.filename = filename
+
+        node_image_keys = f.get('nodeimage_keys', [])
+        for i, n_bytes in enumerate(node_image_keys):
+            n = str(n_bytes)
+            compressed_value = (f[f'nodeimage_{i}'], f[f'nodeimageinfo_{i}'])
+
+            info_obj = compressed_value[1]
+            try:
+                # Handle old format where string reference info was an empty ndarray
+                is_ref = info_obj.size == 0
+            except AttributeError:
+                is_ref = False
+
+            if is_ref:
+                ref_node_name = str(compressed_value[0])
+                g.compressed_node_images[n] = (ref_node_name, [])
+                g.node_images[n] = f"ref:{ref_node_name}"
+            else:
+                data = compressed_value[0]
+                info = list(compressed_value[1])
+                g.compressed_node_images[n] = (data, info)
+                g.node_images[n] = None
+
+        g.filename = os.path.splitext(filename)[0] + '.db'
         return g
-    @classmethod
-    def load_old(cls, filename):
-        f = np.load(filename)
-        g = cls(str(f['name']))
-        g.nodes = list(map(str, f['nodes']))
-        g.edges = eval(str(f['edges']), transform.__dict__, transform.__dict__)
-        for i,n in enumerate(f['nodeimage_keys']):
-            n = str(n)
-            g.node_images[n] = f[f'nodeimage_{i}']
-        return g
+    
     def add_node(self, name, image=None, compression="normal", notes=""):
         # Image can either be a 3-dimensional ndarray or a string of another node
         assert name not in self.nodes, f"Node '{name}' already exists"
-        if image is not None: # Do this first because it may fail due to a memory error, and we don't want the node half-added
+        if image is not None:
             if isinstance(image, str):
+                assert image in self.nodes, f"Referenced node '{image}' for new node '{name}' does not exist"
                 self.compressed_node_images[name] = (image, [])
+                self.node_images[name] = f"ref:{image}"
             else:
                 if image.ndim == 2:
                     image = image[None]
-                self.compressed_node_images[name] = utils.compress_image(image, level=compression)
+                compressed = utils.compress_image(image, level=compression)
+                self.compressed_node_images[name] = compressed
                 self.node_images[name] = image
         self.node_notes[name] = notes
         self.nodes.append(name)
         self.edges[name] = {}
         # TODO this doesn't handle the case where other node images refer to the given node
+    
     def remove_node(self, name):
         if name in self.compressed_node_images:
             del self.compressed_node_images[name]
@@ -78,28 +227,34 @@ class TransformGraph:
             del self.node_images[name]
         if name in self.node_notes:
             del self.node_notes[name]
-        for n in list(self.edges[name]):
-            del self.edges[name][n]
-            if name in self.edges[n]:
+        del self.edges[name]
+        for n in self.nodes:
+            if n in self.edges and name in self.edges[n]:
                 del self.edges[n][name]
         self.nodes.remove(name)
+
     def replace_node_image(self, name, image=None, compression="normal"):
         """Replace or remove a node's image without impacting its other connections"""
-        # Mostly copied from add_node
         assert name in self.nodes, f"Node '{name}' doesn't exist"
-        if name in self.node_images:
-            del self.node_images[name]
-        if image is not None: # Do this first because it may fail due to a memory error, and we don't want the node half-added
-            if isinstance(image, str):
-                self.compressed_node_images[name] = (image, [])
-            else:
-                if image.ndim == 2:
-                    image = image[None]
-                self.compressed_node_images[name] = utils.compress_image(image, level=compression)
-                self.node_images[name] = image
-        else:
-            if name in self.compressed_node_images.keys():
+
+        if image is None:
+            if name in self.node_images:
+                del self.node_images[name]
+            if name in self.compressed_node_images:
                 del self.compressed_node_images[name]
+            return
+        
+        if isinstance(image, str):
+            assert image in self.nodes, f"Referenced node '{image}' for node '{name}' does not exist"
+            self.compressed_node_images[name] = (image, [])
+            self.node_images[name] = f"ref:{image}"
+        else:
+            if image.ndim == 2:
+                image = image[None]
+            compressed = utils.compress_image(image, level=compression)
+            self.compressed_node_images[name] = compressed
+            self.node_images[name] = image
+
     def add_edge(self, frm, to, transform, update=False):
         assert frm in self.nodes, f"Node '{frm}' doesn't exist"
         assert to in self.nodes, f"Node '{to}' doesn't exist"
@@ -113,6 +268,7 @@ class TransformGraph:
             self.edges[to][frm] = inv
         except NotImplementedError:
             pass
+
     def remove_edge(self, frm, to):
         assert frm in self.nodes, f"Node '{frm}' doesn't exist"
         assert to in self.nodes, f"Node '{to}' doesn't exist"
@@ -120,6 +276,7 @@ class TransformGraph:
         del self.edges[frm][to]
         if frm in self.edges[to].keys():
             del self.edges[to][frm]
+
     def connected_components(self):
         """Find connected components in the graph.
 
@@ -143,11 +300,18 @@ class TransformGraph:
                 current_component = current_component.union(set(connected))
             components.append(current_component)
         return components
+
     def unload(self):
         """Clear memory by unloading the node images, keeping only the compressed forms"""
-        keys = list(self.node_images.keys())
-        for k in keys:
-            del self.node_images[k]
+        # Before deleting nodes from node_images, make sure that this isn't
+        # unsaved.
+        nodes_to_unload = [
+            node for node, image in self.node_images.items()
+            if isinstance(image, np.ndarray) and node not in self.compressed_node_images
+        ]
+        for node_name in nodes_to_unload:
+            self.node_images[node_name] = None
+    
     def get_transform(self, frm, to):
         assert frm in self.nodes, f"Node {frm} not found"
         assert to in self.nodes, f"Node {to} not found"
@@ -172,13 +336,45 @@ class TransformGraph:
             candidates.extend(to_append)
         raise RuntimeError(f"Path from '{frm}' to '{to}' not found")
     def get_image(self, node):
-        if node not in self.node_images.keys():
-            if len(self.compressed_node_images[node][1]) == 0: # First element is a string of a node
-                imnode = str(self.compressed_node_images[node][0])
-                self.node_images[node] = self.get_transform(imnode, node).transform_image(self.get_image(imnode), relative=True)
-            else:
-                self.node_images[node] = utils.decompress_image(*self.compressed_node_images[node])
-        return self.node_images[node]
+        if node not in self.node_images:
+            raise KeyError(f"Node '{node}' does not have an associated image.")
+
+        cached_value = self.node_images[node]
+
+        if isinstance(cached_value, np.ndarray):
+            return cached_value
+
+        if isinstance(cached_value, str) and cached_value.startswith('ref:'):
+            imnode = cached_value.split(':', 1)[1]
+            transformed_image = self.get_transform(imnode, node).transform_image(self.get_image(imnode), relative=True)
+            self.node_images[node] = transformed_image
+            return transformed_image
+
+        if cached_value is None:
+            if not self.filename or not os.path.exists(self.filename):
+                raise RuntimeError("Graph has no associated database file to load image from.")
+            
+            con = sqlite3.connect(f'file:{self.filename}?mode=ro', uri=True)
+            cur = con.cursor()
+            try:
+                cur.execute("SELECT data, info FROM node_images WHERE node_name = ? AND ref_node IS NULL", (node,))
+                row = cur.fetchone()
+                if row is None:
+                    raise RuntimeError(f"Image for node '{node}' not found in database '{self.filename}'.")
+                
+                data_bytes, info_json = row
+                info = np.array(json.loads(info_json))
+                
+                np_data = np.frombuffer(data_bytes, dtype=np.uint8)
+                
+                image = utils.decompress_image(np_data, info)
+                self.node_images[node] = image
+                return image
+            finally:
+                con.close()
+
+        raise RuntimeError(f"Internal error in get_image for node '{node}'. Invalid cache state: {cached_value}")
+
     def visualise(self, filename=None, nearby=None):
         fn = filename
         if fn is None:
