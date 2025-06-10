@@ -146,8 +146,6 @@ def compress_image(img, level="normal"):
     # Format code 2 == jpegs
     if img.ndim == 2:
         img = np.asarray([img])
-    transform_id = _image_detect_transform(img)
-    img = _image_compression_transform(img, transform_id)
     if False: # Image code 0 is uncompressed, which we don't use anymore.
         return img, [0]
     if image_is_label(img): # Lossless compression with gzip (format code 3)
@@ -159,6 +157,8 @@ def compress_image(img, level="normal"):
         comp = zlib.compress(zlib.compress(img, 9), 9)
         return comp, [3, str(img.dtype), *img.shape]
     if min(img.shape) > 10: # Compress volumes as a video in vp9 format (format code 1)
+        transform_id = _image_detect_transform(img)
+        img = _image_compression_transform(img, transform_id)
         bitrate = 20000000 if level == "normal" else 40000000 if level == "high" else 10000000
         # We normalise in a complicated way to reduce memory usage for large images
         maxplanes = np.quantile(img, .999)
@@ -183,6 +183,8 @@ def compress_image(img, level="normal"):
         writer.close()
         return np.frombuffer(pseudofile.getvalue(), dtype=np.uint8), kind
     else: # Compress as jpegs (format code 2)
+        transform_id = _image_detect_transform(img)
+        img = _image_compression_transform(img, transform_id)
         quality = 90 if level == "normal" else 95 if level == "high" else 80
         files = []
         maxes = []

@@ -157,9 +157,9 @@ class Transform:
         if img.shape[0] == 1: # This is a hack to get around thickness=1 images disappearing in the map_coordinates function 
             img = np.concatenate([img, img])
         if img.shape[1] == 1:
-            img = img*np.ones((1,2,1))
+            img = img*np.ones((1,2,1), dtype=img.dtype)
         if img.shape[2] == 1:
-            img = img*np.ones((1,1,2))
+            img = img*np.ones((1,1,2), dtype=img.dtype)
         # For memory efficiency, we split coords into chunks
         zcoords = np.arange(0, shape[0]*downsample_output[0], downsample_output[0], dtype="int")
         ycoords = np.arange(0,shape[1]*downsample_output[1], downsample_output[1], dtype="int")

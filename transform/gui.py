@@ -14,27 +14,26 @@ class GraphViewer(napari.Viewer):
         object.__setattr__(self, "space", space)
         if isinstance(space, str):
             self.title = f"Alignment in {space} space"
-    def _get_data_origin_name(self, data, space, labels=False):
-        name = "data"
+    def _get_data_origin_name(self, data, space, name=None, labels=False):
         if isinstance(data, str):
-            name = data
+            name = name or data
             space = data if space is None else space
             data = self.graph.get_image(data)
         if self.space is None and space is not None: # First image sets the space if unset
             object.__setattr__(self, "space", space)
             self.title = f"Alignment in {space} space"
         if data.shape[0] == 1:
-            data = data * np.ones((2,1,1), dtype="int") # TODO Hack for now when we can't see 1-plane images in napari
+            data = data * np.ones((2,1,1), dtype=data.dtype) # TODO Hack for now when we can't see 1-plane images in napari
         if self.space is not None and space is not None and self.space != space:
             data = self.graph.get_transform(space, self.space).transform_image(data, labels=labels)
         origin = data.origin if isinstance(data, ndarray_shifted) else np.zeros_like(data.shape)
         scale = data.scale if isinstance(data, ndarray_shifted) else np.ones_like(data.shape)
-        return data, origin, scale, name
-    def add_image(self, data, space=None, **kwargs):
-        data, origin, scale, name = self._get_data_origin_name(data, space)
+        return data, origin, scale, name or "data"
+    def add_image(self, data, space=None, name=None, **kwargs):
+        data, origin, scale, name = self._get_data_origin_name(data, space, name)
         return super().add_image(data, translate=origin, name=name, scale=scale, **kwargs)
-    def add_labels(self, data, space=None, **kwargs):
-        data, origin, scale, name = self._get_data_origin_name(data, space, labels=True)
+    def add_labels(self, data, space=None, name=None, **kwargs):
+        data, origin, scale, name = self._get_data_origin_name(data, space, name, labels=True)
         return super().add_labels(data, translate=origin, name=name, scale=scale, **kwargs)
     def add_points(self, data, space=None, **kwargs):
         if space is not None and self.space is not None:
