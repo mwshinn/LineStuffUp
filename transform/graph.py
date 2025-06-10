@@ -4,6 +4,8 @@ from . import ndarray_shifted as ndarray_shifted
 from . import utils
 import os
 import tempfile
+import sqlite3
+import json
 
 
 class TransformGraph:
@@ -43,6 +45,10 @@ class TransformGraph:
             filename = self.filename
         if filename is None:
             raise ValueError("Filename must be provided to save.")
+        if filename.endswith(".npz"):
+            raise ValueError("Saving in npz format is no longer supported")
+        if "." not in filename:
+            filename = filename+".db"
 
         self.filename = filename
         
@@ -111,7 +117,6 @@ class TransformGraph:
                     )
                 else:  # Actual image data
                     data, info = compressed_value
-                    # ***FIX***: Convert numpy array to bytes for sqlite BLOB storage.
                     cur.execute(
                         "INSERT OR REPLACE INTO node_images (node_name, data, info, ref_node) VALUES (?, ?, ?, NULL)",
                         (node_name, data.tobytes(), json.dumps(info))
