@@ -95,8 +95,8 @@ for t in ALL_TRANSFORMS + POINT_TRANSFORMS_SLOW:
     image_transformed_once = t.transform_image(checkerboard, output_size=checkerboard.shape)
     image_transformed_twice = t.transform_image(image_transformed_once, output_size=checkerboard.shape)
     image_transformed_sum = (t+t).transform_image(checkerboard, output_size=checkerboard.shape)
-    corr = np.corrcoef(image_transformed_twice.flatten(), image_transformed_sum.flatten())[0,1]
-    assert corr > .95, f"Correlation for composition of {t} was too low, it was {corr}"
+    sim = np.mean(image_transformed_twice.flatten()==image_transformed_sum.flatten())
+    assert sim > .9, f"Correlation for composition of {t} was too low, it was {corr}"
 
 # Test for exact answers for some transforms
 assert close(TranslateFixed(z=5, y=4, x=7).transform(points_pre), points_pre+[5,4,7])

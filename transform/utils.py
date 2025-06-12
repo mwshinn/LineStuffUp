@@ -64,12 +64,12 @@ def bake_images(im_fixed, im_movable, transform):
 def absolute_coords_to_voxel_coords(img, coords):
     if not isinstance(img, ndarray_shifted):
         img = ndarray_shifted(img)
-    return np.round((coords - img.origin)/img.scale).astype(int)
+    return np.round(coords - img.origin).astype(int)
 
 def voxel_coords_to_absolute_coords(img, coords):
     if not isinstance(img, ndarray_shifted):
         img = ndarray_shifted(img)
-    return coords * img.scale + img.origin
+    return coords + img.origin
 
 def crop_to_intersection(img1, img2):
     # TODO DOes not yet work with downsampling
@@ -77,8 +77,8 @@ def crop_to_intersection(img1, img2):
         img1 = ndarray_shifted(img1)
     if not isinstance(img2, ndarray_shifted):
         img2 = ndarray_shifted(img2)
-    absolute_coords_to_voxel_coords = lambda img,coords: np.round((coords - img.origin)/img.scale).astype(int)
-    voxel_coords_to_absolute_coords = lambda img,coords: coords * img.downsample + img.origin
+    absolute_coords_to_voxel_coords = lambda img,coords: np.round(coords - img.origin).astype(int)
+    voxel_coords_to_absolute_coords = lambda img,coords: coords + img.origin
     origin = np.max([img1.origin, img2.origin], axis=0)
     maxpos = np.min([voxel_coords_to_absolute_coords(img1, img1.shape), voxel_coords_to_absolute_coords(img2, img2.shape)], axis=0)
     output_img = np.zeros(img1.shape)
@@ -117,8 +117,8 @@ def image_is_label(img):
         return False
     if len(vals) == 1: # All black
         return False
-    if 0 not in vals or np.max(counts) != counts[vals==0][0]: # Zero isn't the most common
-        return False
+    # if 0 not in vals or np.max(counts) != counts[vals==0][0]: # Zero isn't the most common
+    #     return False
     return True
 
 def _image_compression_transform(img, transform_id):

@@ -1,11 +1,10 @@
 import numpy as np
 import scipy
 from .ndarray_shifted import ndarray_shifted
-from .utils import blit, invert_function_numerical
+from .utils import blit, invert_function_numerical, image_is_label
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
-# - Remove downsample feature
 # - Change naming on align_interactive
 # - Change name of Fixed transforms?
 
@@ -118,7 +117,20 @@ class Transform:
     def invert(self):
         raise NotImplementedError("Please subclass and replace")
     def origin_and_maxpos(self, img, output_size=None, force_size=True):
-        """When not selecting an output size for image transformation, find the corners of the bounds based on the input image size"""
+        """Find an output (transformed) image bounding box.
+
+        `img` is the input image.
+
+        If `output_size` is None, this will generate the smallest possible
+        bounding box  If it is a list or tuple of integers with length 3,
+        it will generate an image of the given size.  If it is a list of tuple
+        of 3 lists or tuples of length 2, it will interpret each as a minimum
+        and maximum coordinate in the output space.
+
+        If `force_size` is False, it will interpret `output_size` as a maximum
+        bounding box, but it may generate a smaller image if it is more
+        computationally efficient.
+        """
         input_bounds = img.shape
         origin_offset = img.origin if isinstance(img, ndarray_shifted) else [0,0,0]
         corners_pretransform = [[a, b, c] for a in [0, input_bounds[0]] for b in [0, input_bounds[1]] for c in [0, input_bounds[2]]]
@@ -143,23 +155,34 @@ class Transform:
         else:
             raise ValueError(f"Invalid value of `output_size` passed: {output_size}")
         return origin,maxpos
-    def transform_image(self, img, output_size=None, labels=False, downsample=None, force_size=True):
+    def transform_image(self, img, output_size=None, labels=None, force_size=True):
         """Generic non-rigid transformation for images.
 
-        Apply the transformation to image `img`.  `pad` is the number of pixels
-        of zeros to pad on each side, it can be a scalar or a length-3 vector.
-        (This way, transformations will not be clipped at the image boundaries.)
+        Apply the transformation to image `img`.
 
-        If `labels` is True, no interpolation is performed.
+        If `output_size` is None, this will generate the smallest possible
+        output image size.  If it is a list or tuple of integers with length 3,
+        it will generate an image of the given size.  If it is a list of tuple
+        of 3 lists or tuples of length 2, it will interpret each as a minimum
+        and maximum coordinate in the output space.
+
+        If `labels` is True, no interpolation is performed.  This is for images
+        of labels, e.g., segmentations.  If None, it will guess whether the
+        image is labels or not.
+
+        If `force_size` is False, it will interpret `output_size` as a maximum
+        bounding box, but it may generate a smaller image if it is more
+        computationally efficient.
 
         This can be overridden by more efficient implementations in subclasses.
 
         """
+        if labels is None:
+            labels = image_is_label(img)
         if img.ndim == 2:
             img = img[None]
         origin, maxpos = self.origin_and_maxpos(img, output_size=output_size, force_size=force_size)
-        downsample_output = np.asarray([1, 1, 1], dtype="int") if downsample is None else np.asarray([downsample, downsample, downsample], dtype="int") if isinstance(downsample, np.integer) else np.asarray(downsample, dtype="int")
-        shape = (maxpos - origin).astype(int)//downsample_output
+        shape = (maxpos - origin).astype(int)
         # shape = np.round(np.ceil(maxpos - origin)/downsample_output).astype(int) # Maybe this is better?
         # shape = np.asarray(img.shape).astype(int) # Pulled from old code
 
@@ -170,9 +193,9 @@ class Transform:
         if img.shape[2] == 1:
             img = img*np.ones((1,1,2), dtype=img.dtype)
         # For memory efficiency, we split coords into chunks
-        zcoords = np.arange(0, shape[0]*downsample_output[0], downsample_output[0], dtype="int")
-        ycoords = np.arange(0,shape[1]*downsample_output[1], downsample_output[1], dtype="int")
-        xcoords = np.arange(0,shape[2]*downsample_output[2], downsample_output[2], dtype="int")
+        zcoords = np.arange(0, shape[0], dtype="int")
+        ycoords = np.arange(0,shape[1], dtype="int")
+        xcoords = np.arange(0,shape[2], dtype="int")
         def chunker(zcoords, ycoords, xcoords, chunksize=10_000_000):
             """It takes lots of memory to do this all at once so we create chunks based on z planes"""
             zsize = len(ycoords)*len(xcoords)
@@ -203,8 +226,7 @@ class Transform:
             mapped_grid = self.inverse_transform(grid)
             #print(mapped_grid.shape, chunk_shape, inds)
             del grid
-            if isinstance(img, ndarray_shifted): # Adjust for input origin and downsampling
-                mapped_grid *= img.scale
+            if isinstance(img, ndarray_shifted): # Adjust for input origin
                 mapped_grid += img.origin
             displacement = mapped_grid.reshape(*chunk_shape,3).transpose(3,0,1,2)
             # Prefilter == False speeds it up a lot when going from big images
@@ -212,7 +234,7 @@ class Transform:
             # though, having't done a comparison yet. (I would naively think the
             # problem would be aliasing, not blur?)
             output[inds] = scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=(0 if labels else 1))
-        return ndarray_shifted(output, origin=origin, scale=downsample_output, only_if_necessary=True) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
+        return ndarray_shifted(output, origin=origin, only_if_necessary=True) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
         """Default fixed transform, applied before this transform is applied.
@@ -270,19 +292,17 @@ class AffineTransform:
     """
     def _transform(self, points):
         return points @ self.matrix - self.shift
-    def transform_image(self, image, output_size=None, labels=False, downsample=None, force_size=True):
+    def transform_image(self, image, output_size=None, labels=None, force_size=True):
         # Optimisation for the case where no image transform needs to be
         # performed.
-        # TODO Doesn't work if input image is downsampled or shifted
         if np.all(self.matrix == np.eye(3)):
             if output_size is None:
-                downsample = downsample if downsample is not None else [1,1,1]
-                return ndarray_shifted(image[::downsample[0],::downsample[1],::downsample[2]], scale=downsample, origin=-self.shift, only_if_necessary=True)
+                return ndarray_shifted(image, origin=-self.shift, only_if_necessary=True)
             # else:
             #     newimg = np.zeros_like(image)
             #     blit(image, newimg, self.shift) # TODO test, not sure if this works
             #     return newimg
-        return super().transform_image(image, output_size=output_size, labels=labels, downsample=downsample, force_size=force_size)
+        return super().transform_image(image, output_size=output_size, labels=labels, force_size=force_size)
     def invert(self):
         """Invert the transform.
 
@@ -532,11 +552,9 @@ class Identity(AffineTransform,Transform):
         return points
     def invert(self):
         return self.__class__()
-    def transform_image(self, image, output_size=None, labels=False, downsample=None, force_size=None):
+    def transform_image(self, image, output_size=None, labels=None, force_size=None):
         """More efficient implementation of image transformation"""
-        # TODO This doesn't work for different output_size values or downsample
-        if downsample is not None:
-            return image[::downsample[0],::downsample[1],::downsample[2]]
+        # TODO This doesn't work for different output_size values
         return image
 
 class Rescale(AffineTransform,Transform):
