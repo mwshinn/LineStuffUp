@@ -5,7 +5,7 @@ from .utils import blit, invert_function_numerical
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
-# - Simplify transform_image to just have output_size argument (rename relative and remove downsample)
+# - Remove downsample feature
 # - Change naming on align_interactive
 # - Change name of Fixed transforms?
 
@@ -85,6 +85,14 @@ class Transform:
         if (adata.ndim == 2 and adata.shape[1] == 3) or (adata.ndim == 1 and adata.shape[0] == 3):
             return self.transform(adata, *args, **kwargs)
         return self.transform_image(adata, *args, **kwargs)
+    def save(self, filename):
+        with open(filename, "w") as f:
+            f.write(repr(self))
+    @staticmethod
+    def load(filename):
+        with open(filename, "r") as f:
+            text = f.read()
+        return eval(text, globals(), None)
     def transform(self, points):
         points = np.asarray(points)
         is_1d = False
