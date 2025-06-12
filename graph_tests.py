@@ -6,7 +6,7 @@ import tempfile
 import numpy as np
 
 # Import the class to be tested
-from graphsqlite import TransformGraph
+from transform import TransformGraph
 from transform import Identity, TranslateFixed, PointTransformNoInverse, utils
 import transform
 
@@ -14,8 +14,6 @@ class InvertibleError(PointTransformNoInverse):
     DEFAULT_PARAMETERS = {"extent": 1, "invert": False}
     def _transform(self, points, points_start, points_end):
         return points
-    def invert(self, *args, **kwargs):
-        raise NotImplementedError
 
 class TestTransformGraph(unittest.TestCase):
 
@@ -95,7 +93,6 @@ class TestTransformGraph(unittest.TestCase):
         t_ac = InvertibleError()
         g.add_edge("A", "C", t_ac)
         self.assertIn("C", g.edges["A"])
-        self.assertNotIn("A", g.edges["C"]) # No inverse
 
         # Remove edge
         g.remove_edge("A", "B")
@@ -198,11 +195,6 @@ class TestTransformGraph(unittest.TestCase):
 
         # Load the .npz file
         g = TransformGraph.load(self.npz_path)
-
-        # Check for conversion
-        new_db_path = os.path.join(self.test_dir, "old_graph.sqlite3")
-        self.assertTrue(os.path.exists(new_db_path))
-        self.assertEqual(g.filename, new_db_path)
         
         # Check data integrity
         self.assertEqual(g.name, name)

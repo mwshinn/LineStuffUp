@@ -5,7 +5,6 @@ from . import utils
 import os
 import tempfile
 import sqlite3
-import json
 
 
 class TransformGraph:
@@ -119,7 +118,7 @@ class TransformGraph:
                     data, info = compressed_value
                     cur.execute(
                         "INSERT OR REPLACE INTO node_images (node_name, data, info, ref_node) VALUES (?, ?, ?, NULL)",
-                        (node_name, data, json.dumps(info))
+                        (node_name, data, str(info))
                     )
             
             con.commit()
@@ -200,7 +199,7 @@ class TransformGraph:
             else:
                 data = compressed_value[0]
                 info = list(compressed_value[1])
-                g.compressed_node_images[n] = (data, info)
+                g.compressed_node_images[n] = (data, [i.item() for i in info]) # Avoid numpy printing datatypes
                 g.node_images[n] = None
 
         g.filename = os.path.splitext(filename)[0] + '.db'
@@ -270,6 +269,7 @@ class TransformGraph:
         self.edges[frm][to] = transform
         # At some point in the future we can support directed graphs, i.e.,
         # graphs with non-invertible transforms.
+        inv = transform.invert()
         self.edges[to][frm] = inv
 
     def remove_edge(self, frm, to):
@@ -344,40 +344,40 @@ class TransformGraph:
         if node not in self.node_images:
             raise KeyError(f"Node '{node}' does not have an associated image.")
 
+        # First try to load it from the cache
         cached_value = self.node_images[node]
-
         if isinstance(cached_value, np.ndarray):
             return cached_value
-
         if isinstance(cached_value, str) and cached_value.startswith('ref:'):
             imnode = cached_value.split(':', 1)[1]
             transformed_image = self.get_transform(imnode, node).transform_image(self.get_image(imnode), relative=True)
             self.node_images[node] = transformed_image
             return transformed_image
-
+        # If it is not cached, we will need to decompress.
         if cached_value is None:
-            if not self.filename or not os.path.exists(self.filename):
-                raise RuntimeError("Graph has no associated database file to load image from.")
-            
-            con = sqlite3.connect(f'file:{self.filename}?mode=ro', uri=True)
-            cur = con.cursor()
-            try:
-                cur.execute("SELECT data, info FROM node_images WHERE node_name = ? AND ref_node IS NULL", (node,))
-                row = cur.fetchone()
-                if row is None:
-                    raise RuntimeError(f"Image for node '{node}' not found in database '{self.filename}'.")
-                
-                data_bytes, info_json = row
-                info = np.array(json.loads(info_json))
-                
-                np_data = np.frombuffer(data_bytes, dtype=np.uint8)
-                
-                image = utils.decompress_image(np_data, info)
-                self.node_images[node] = image
-                return image
-            finally:
-                con.close()
+            # Look for the compressed image in the dirty images, and if you
+            # can't find it there, then go to the db file on the disk.
+            if node in self.compressed_node_images.keys():
+                compressed_image = self.compressed_node_images[node]
+            else:
+                if not self.filename or not os.path.exists(self.filename):
+                    raise RuntimeError("Graph has no associated database file to load image from.")
 
+                con = sqlite3.connect(f'file:{self.filename}?mode=ro', uri=True)
+                cur = con.cursor()
+                try:
+                    cur.execute("SELECT data, info FROM node_images WHERE node_name = ? AND ref_node IS NULL", (node,))
+                    row = cur.fetchone()
+                    if row is None:
+                        raise RuntimeError(f"Image for node '{node}' not found in database '{self.filename}'.")
+                    compressed_image = (row[0], eval(row[1]))
+                finally:
+                    con.close()
+            data_bytes, info = compressed_image
+            np_data = np.frombuffer(data_bytes, dtype=np.uint8)
+            image = utils.decompress_image(np_data, info)
+            self.node_images[node] = image
+            return image
         raise RuntimeError(f"Internal error in get_image for node '{node}'. Invalid cache state: {cached_value}")
 
     def visualise(self, filename=None, nearby=None):
