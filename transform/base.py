@@ -1,3 +1,5 @@
+import os
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 import scipy
 from .ndarray_shifted import ndarray_shifted
@@ -220,20 +222,18 @@ class Transform:
         # from the destination image to the source image, and then use the
         # map_coordinates function to perform this mapping.
         output = np.zeros((len(zcoords),len(ycoords),len(xcoords)), dtype=(img.dtype if labels else "float32"))
-        for grid,chunk_shape,inds in chunker(zcoords, ycoords, xcoords):
-            #grid = meshgrid.T.reshape(-1,3)
-            grid += origin
-            mapped_grid = self.inverse_transform(grid)
-            #print(mapped_grid.shape, chunk_shape, inds)
-            del grid
-            if isinstance(img, ndarray_shifted): # Adjust for input origin
-                mapped_grid += img.origin
-            displacement = mapped_grid.reshape(*chunk_shape,3).transpose(3,0,1,2)
-            # Prefilter == False speeds it up a lot when going from big images
-            # to small images.  Supposedly it makes the output images blurrier
-            # though, having't done a comparison yet. (I would naively think the
-            # problem would be aliasing, not blur?)
-            output[inds] = scipy.ndimage.map_coordinates(img, displacement, prefilter=False, order=(0 if labels else 1))
+        def _process_chunk(args):
+            grid, chunk_shape, inds = args
+            grid = grid + origin
+            mapped = self.inverse_transform(grid)
+            if isinstance(img, ndarray_shifted):
+                mapped += img.origin
+            disp = mapped.reshape(*chunk_shape, 3).transpose(3, 0, 1, 2)
+            block = scipy.ndimage.map_coordinates(img, disp, prefilter=False, order=(0 if labels else 1))
+            return inds, block
+        with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
+             for inds, block in pool.map(_process_chunk, chunker(zcoords, ycoords, xcoords, chunksize=4_000_000)):
+                 output[inds] = block
         return ndarray_shifted(output, origin=origin, only_if_necessary=True) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
