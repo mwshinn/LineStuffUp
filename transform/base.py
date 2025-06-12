@@ -5,6 +5,9 @@ from .utils import blit, invert_function_numerical
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
+# - Simplify transform_image to just have output_size argument (rename relative and remove downsample)
+# - Change naming on align_interactive
+# - Change name of Fixed transforms?
 
 def rotation_matrix(z, y, x):
     """Perform *clockwise* rotation in degrees along the three axes"""
@@ -79,7 +82,7 @@ class Transform:
         return compose_transforms(self, other)
     def __call__(self, data, *args, **kwargs):
         adata = np.asarray(data)
-        if adata.ndim == 2 and adata.shape[1] == 3:
+        if (adata.ndim == 2 and adata.shape[1] == 3) or (adata.ndim == 1 and adata.shape[0] == 3):
             return self.transform(adata, *args, **kwargs)
         return self.transform_image(adata, *args, **kwargs)
     def transform(self, points):

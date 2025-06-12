@@ -26,9 +26,9 @@ class TransformGraph:
         #      or {node_name: (ref_node_name, [])} for a reference
         self.compressed_node_images = {}
         
-        self.node_notes = {}
         self.filename = None
         self.metadata = None
+        self.node_metadata = {}
 
     def __eq__(self, other):
         # NOTE: This equality check does not compare image data for performance reasons.
@@ -101,8 +101,8 @@ class TransformGraph:
             properties = {
                 'name': self.name,
                 'edges': repr(self.edges),
-                'notes': repr(self.node_notes),
-                'metadata': repr(self.metadata)
+                'metadata': repr(self.metadata),
+                'node_metadata': repr(self.node_metadata),
             }
             cur.executemany("INSERT OR REPLACE INTO graph_properties VALUES (?, ?)", properties.items())
 
@@ -154,7 +154,7 @@ class TransformGraph:
         if not os.path.exists(filename):
             raise FileNotFoundError(f"No such file or directory: '{filename}'")
         if filename.endswith(".npz"):
-            return cls._load_npz_and_convert(filename)
+            return cls._load_npz(filename)
         return cls._load_sqlite(filename)
     @classmethod
     def _load_sqlite(cls, filename):
@@ -170,8 +170,8 @@ class TransformGraph:
             props = dict(cur.fetchall())
 
             g.edges = eval(props['edges'], transform.__dict__, transform.__dict__)
-            g.node_notes = eval(props.get('notes', '{}'))
             g.metadata = eval(props.get('metadata', 'None'))
+            g.node_metadata = eval(props.get('node_metadata', '{}'))
 
             cur.execute("SELECT name FROM nodes")
             g.nodes = [row[0] for row in cur.fetchall()]
@@ -187,17 +187,19 @@ class TransformGraph:
         return g
 
     @classmethod
-    def _load_npz_and_convert(cls, filename):
+    def _load_npz(cls, filename):
         print(f"Loading legacy NPZ file: {filename}. It will be converted to the new SQLite format.")
         f = np.load(filename, allow_pickle=True)
         g = cls(str(f['name']))
 
         g.nodes = list(map(str, f['nodes']))
         g.edges = eval(str(f['edges']), transform.__dict__, transform.__dict__)
-        if "notes" in f.keys():
-            g.node_notes = eval(str(f['notes']))
         if "metadata" in f.keys():
             g.metadata = eval(str(f['metadata']))
+        if "notes" in f.keys():
+            g.node_metadata = eval(str(f['notes']))
+        else:
+            g.node_metadata = {}
 
         node_image_keys = f.get('nodeimage_keys', [])
         for i, n_bytes in enumerate(node_image_keys):
@@ -224,7 +226,7 @@ class TransformGraph:
         g.filename = os.path.splitext(filename)[0] + '.db'
         return g
     
-    def add_node(self, name, image=None, compression="normal", notes=""):
+    def add_node(self, name, image=None, compression="normal", metadata=None):
         # Image can either be a 3-dimensional ndarray or a string of another node
         assert name not in self.nodes, f"Node '{name}' already exists"
         if image is not None:
@@ -238,7 +240,8 @@ class TransformGraph:
                 compressed = utils.compress_image(image, level=compression)
                 self.compressed_node_images[name] = compressed
                 self.node_images[name] = image
-        self.node_notes[name] = notes
+        if metadata is not None:
+            self.node_metadata[name] = metadata
         self.nodes.append(name)
         self.edges[name] = {}
         # TODO this doesn't handle the case where other node images refer to the given node
@@ -248,8 +251,8 @@ class TransformGraph:
             del self.compressed_node_images[name]
         if name in self.node_images:
             del self.node_images[name]
-        if name in self.node_notes:
-            del self.node_notes[name]
+        if name in self.node_metadata:
+            del self.node_metadata[name]
         del self.edges[name]
         for n in self.nodes:
             if n in self.edges and name in self.edges[n]:
