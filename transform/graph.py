@@ -38,6 +38,25 @@ class TransformGraph:
                 self.nodes == other.nodes and
                 self.edges == other.edges and
                 set(self.node_images.keys()) == set(other.node_images.keys()))
+    def __getitem__(self, item):
+        if isinstance(item, str) and item in self.nodes:
+            return self.get_image(item)
+        if isinstance(item, slice) and isinstance(item.start, str) and isinstance(item.stop, str) and item.step is None and item.start in self.nodes and item.stop in self.nodes:
+            return self.get_transform(item.start, item.stop)
+        raise ValueError(f"A graph cannot have the item '{item}'")
+    def __setitem__(self, name, value):
+        if isinstance(name, str):
+            return self.add_node(name, image=value)
+        if isinstance(name, slice) and isinstance(name.start, str) and isinstance(name.stop, str) and name.step is None:
+            return self.add_edge(name.start, name.stop, value)
+        raise ValueError(f"A graph cannot assign the item '{item}'")
+        
+    def __contains__(self, item):
+        if isinstance(item, str):
+            return item in self.nodes
+        elif isinstance(item, (tuple, list)) and len(item) == 2:
+            return item[0] in self.edges.keys() and item[1] in self.edges[item[0]].keys()
+        raise ValueError(f"A graph cannot contain the item '{item}'")
 
     def save(self, filename=None):
         if filename is None:

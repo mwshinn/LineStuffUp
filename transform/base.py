@@ -77,6 +77,11 @@ class Transform:
         return repr(self) == repr(other)
     def __add__(self, other):
         return compose_transforms(self, other)
+    def __call__(self, data, *args, **kwargs):
+        adata = np.asarray(data)
+        if adata.ndim == 2 and adata.shape[1] == 3:
+            return self.transform(adata, *args, **kwargs)
+        return self.transform_image(adata, *args, **kwargs)
     def transform(self, points):
         points = np.asarray(points)
         is_1d = False
