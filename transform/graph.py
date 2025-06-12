@@ -119,7 +119,7 @@ class TransformGraph:
                     data, info = compressed_value
                     cur.execute(
                         "INSERT OR REPLACE INTO node_images (node_name, data, info, ref_node) VALUES (?, ?, ?, NULL)",
-                        (node_name, data.tobytes(), json.dumps(info))
+                        (node_name, data, json.dumps(info))
                     )
             
             con.commit()
@@ -268,11 +268,9 @@ class TransformGraph:
         else:
             assert to in self.edges[frm].keys(), "Edge doesn't exist"
         self.edges[frm][to] = transform
-        try:
-            inv = transform.invert()
-            self.edges[to][frm] = inv
-        except NotImplementedError:
-            pass
+        # At some point in the future we can support directed graphs, i.e.,
+        # graphs with non-invertible transforms.
+        self.edges[to][frm] = inv
 
     def remove_edge(self, frm, to):
         assert frm in self.nodes, f"Node '{frm}' doesn't exist"
@@ -341,6 +339,8 @@ class TransformGraph:
             candidates.extend(to_append)
         raise RuntimeError(f"Path from '{frm}' to '{to}' not found")
     def get_image(self, node):
+        if node not in self.nodes:
+            raise KeyError(f"Node '{node}' does not exist.")
         if node not in self.node_images:
             raise KeyError(f"Node '{node}' does not have an associated image.")
 
