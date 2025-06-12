@@ -53,7 +53,7 @@ def blit(source, target, loc):
 
 def bake_images(im_fixed, im_movable, transform):
     origin = transform.origin_and_maxpos(im_movable)[0]
-    ti = transform.transform_image(im_movable, relative=True, force_size=False)
+    ti = transform.transform_image(im_movable)
     new_dims_max = np.ceil(np.max([ti.shape + origin, im_fixed.shape], axis=0)).astype(int)
     new_dims_min = np.floor(np.min([origin, [0,0,0]], axis=0)).astype(int)
     im = np.zeros(new_dims_max-new_dims_min, dtype=float)

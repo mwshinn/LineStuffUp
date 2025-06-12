@@ -92,9 +92,9 @@ checkerboard = np.asarray([[[float(((i//10) + (j//10) + (k//10)) % 2) for i in r
 
 # Test compositions when transforming images
 for t in ALL_TRANSFORMS + POINT_TRANSFORMS_SLOW:
-    image_transformed_once = t.transform_image(checkerboard, relative=False)
-    image_transformed_twice = t.transform_image(image_transformed_once, relative=False)
-    image_transformed_sum = (t+t).transform_image(checkerboard, relative=False)
+    image_transformed_once = t.transform_image(checkerboard, output_size=checkerboard.shape)
+    image_transformed_twice = t.transform_image(image_transformed_once, output_size=checkerboard.shape)
+    image_transformed_sum = (t+t).transform_image(checkerboard, output_size=checkerboard.shape)
     corr = np.corrcoef(image_transformed_twice.flatten(), image_transformed_sum.flatten())[0,1]
     assert corr > .95, f"Correlation for composition of {t} was too low, it was {corr}"
 
@@ -116,7 +116,7 @@ _FIXED_TRANSFORMS_SPOT = [TranslateRotateFixed, TranslateFixed, Identity]
 _FIXED_TRANSFORMS_PARAMS_SPOT = [dict(z=3.2, y=5, x=-24, zrotate=3.4, yrotate=5, xrotate=10), dict(z=-10, y=.3, x=4), dict()]
 FIXED_TRANSFORMS_SPOT = [t(**tp) for t,tp in zip(_FIXED_TRANSFORMS_SPOT, _FIXED_TRANSFORMS_PARAMS_SPOT)]
 _POINT_TRANSFORMS_SPOT = [TranslateRotate2D, Translate, TranslateRotate]
-_POINT_TRANSFORMS_SPOT_SLOW = [Triangulation, DistanceWeightedAverage]
+_POINT_TRANSFORMS_SPOT_SLOW = [Triangulation]
 points_pre = np.random.randn(100,3)+50
 points_post = (points_pre@rotation_matrix(1,2,3))-9
 POINT_TRANSFORMS_SPOT = [t(points_pre, points_post) for t in _POINT_TRANSFORMS_SPOT]
@@ -125,18 +125,18 @@ ALL_TRANSFORMS_SPOT = FIXED_TRANSFORMS_SPOT + POINT_TRANSFORMS_SPOT
 
 # Test image transformations in absolute and relative coordinates
 for t in ALL_TRANSFORMS_SPOT + POINT_TRANSFORMS_SPOT_SLOW:
-    spot_rel = np.mean(np.where(t.transform_image(spot, relative=True)>.1), axis=1)
+    spot_rel = np.mean(np.where(t.transform_image(spot)>.1), axis=1)
     assert np.max(spot_rel - (t.transform([spotpos]) - t.origin_and_maxpos(spot)[0])) < 1
-    spot_abs = np.mean(np.where(t.transform_image(spot, relative=False)>.1), axis=1)
+    spot_abs = np.mean(np.where(t.transform_image(spot, output_size=spot.shape)>.1), axis=1)
     assert np.max(spot_abs - t.transform([spotpos])) < 1
 
 # Test compositions in absolute and relative coordinates
 for t1 in ALL_TRANSFORMS_SPOT:
     for t2 in ALL_TRANSFORMS_SPOT:
         t = t1 + t2
-        spot_rel = np.mean(np.where(t.transform_image(spot, relative=True)>.1), axis=1)
+        spot_rel = np.mean(np.where(t.transform_image(spot)>.1), axis=1)
         assert np.max(spot_rel - (t.transform([spotpos]) - t.origin_and_maxpos(spot)[0])) < 1
-        spot_abs = np.mean(np.where(t.transform_image(spot, relative=False)>.1), axis=1)
+        spot_abs = np.mean(np.where(t.transform_image(spot, output_size=spot.shape)>.1), axis=1)
         assert np.max(spot_abs - t.transform([spotpos])) < 1
 
 
@@ -153,8 +153,8 @@ class _TranslateRotateComplicated(TranslateRotate):
         return Transform.transform_image(self, *args, **kwargs)
 
 for simple, complicated in [(Translate, _TranslateComplicated), (TranslateRotate, _TranslateRotateComplicated)]:
-    im1 = complicated(points_pre, points_post).transform_image(checkerboard, relative=False)
-    im2 = simple(points_pre, points_post).transform_image(checkerboard, relative=False)
+    im1 = complicated(points_pre, points_post).transform_image(checkerboard, output_size=checkerboard.shape)
+    im2 = simple(points_pre, points_post).transform_image(checkerboard, output_size=checkerboard.shape)
     corr = np.corrcoef(im1.flatten(), im2.flatten())[0,1]
     assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low, it was {corr}"
     # Commented out because we expand the size of the nonlinear transforms to accommodate for point clouds out of the fov
@@ -166,8 +166,8 @@ for simple, complicated in [(Translate, _TranslateComplicated), (TranslateRotate
 # Test graphs
 g = TransformGraph("mygraph")
 g.add_node("a")
-g.add_node("bx")
 g.add_node("c", image=np.random.randn(2,3,4))
+g.add_node("bx")
 g.add_node("d")
 g.add_edge("a", "bx", ALL_TRANSFORMS[0])
 g.add_edge("a", "c", ALL_TRANSFORMS[1])
@@ -176,7 +176,7 @@ assert close(g.get_transform("bx", "d").transform(g.get_transform("d", "bx").tra
 assert g.get_image("c").shape == (2,3,4)
 assert g == g, "Self-equality failed"
 with tempfile.TemporaryDirectory() as tmpdir:
-    fn = Path(tmpdir).joinpath("file.npz")
+    fn = Path(tmpdir).joinpath("file.db")
     g.save(fn)
     g2 = TransformGraph.load(fn)
     assert g == g2

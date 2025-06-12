@@ -45,12 +45,12 @@ class TestTransformGraph(unittest.TestCase):
         img1 = self._create_sample_image(1)
         
         # Add a node with an image
-        g.add_node("node1", image=img1, notes="This is node 1.")
+        g.add_node("node1", image=img1, metadata="This is node 1.")
         self.assertIn("node1", g.nodes)
         self.assertIn("node1", g.edges)
         self.assertIn("node1", g.node_images)
         self.assertIn("node1", g.compressed_node_images) # Should be dirty
-        self.assertEqual(g.node_notes["node1"], "This is node 1.")
+        self.assertEqual(g.node_metadata["node1"], "This is node 1.")
         np.testing.assert_array_equal(g.get_image("node1"), img1)
 
         # Add a node without an image
@@ -71,7 +71,7 @@ class TestTransformGraph(unittest.TestCase):
         self.assertNotIn("node1", g.edges)
         self.assertNotIn("node1", g.node_images)
         self.assertNotIn("node1", g.compressed_node_images)
-        self.assertNotIn("node1", g.node_notes)
+        self.assertNotIn("node1", g.node_metadata)
 
     def test_03_add_and_remove_edge(self):
         """Test adding and removing edges."""
@@ -105,7 +105,7 @@ class TestTransformGraph(unittest.TestCase):
         img1 = self._create_sample_image(10)
         img2 = self._create_sample_image(20)
 
-        g_orig.add_node("n1", image=img1, notes="Note for n1")
+        g_orig.add_node("n1", image=img1, metadata="Note for n1")
         g_orig.add_node("n2", image=img2)
         g_orig.add_node("n3", image="n1") # Reference node
         g_orig.add_node("n4")
@@ -120,7 +120,7 @@ class TestTransformGraph(unittest.TestCase):
 
         self.assertEqual(g_orig.name, g_loaded.name)
         self.assertEqual(sorted(g_orig.nodes), sorted(g_loaded.nodes))
-        self.assertEqual(g_orig.node_notes, g_loaded.node_notes)
+        self.assertEqual(g_orig.node_metadata, g_loaded.node_metadata)
         self.assertEqual(g_orig.metadata, g_loaded.metadata)
         self.assertEqual(repr(g_orig.edges), repr(g_loaded.edges))
         
@@ -134,7 +134,7 @@ class TestTransformGraph(unittest.TestCase):
         # Test loading of a referenced image
         self.assertEqual(g_loaded.node_images["n3"], "ref:n1")
         # get_image should calculate the transformed image
-        transformed_img = TranslateFixed(x=0).transform_image(img1, relative=True) # Bogus transform, just for check
+        transformed_img = TranslateFixed(x=0).transform_image(img1) # Bogus transform, just for check
         # With our mocks, the path n1->n3 is empty, so there will be an error
         with self.assertRaises(RuntimeError):
             g_loaded.get_image("n3")

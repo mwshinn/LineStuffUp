@@ -35,7 +35,7 @@ class TransformGraph:
         # It only checks if the same nodes have images.
         return (isinstance(other, TransformGraph) and
                 self.name == other.name and
-                self.nodes == other.nodes and
+                set(self.nodes) == set(other.nodes) and
                 self.edges == other.edges and
                 set(self.node_images.keys()) == set(other.node_images.keys()))
     def __getitem__(self, item):
@@ -59,6 +59,7 @@ class TransformGraph:
         raise ValueError(f"A graph cannot contain the item '{item}'")
 
     def save(self, filename=None):
+        filename = str(filename)
         if filename is None:
             filename = self.filename
         if filename is None:
@@ -151,6 +152,7 @@ class TransformGraph:
 
     @classmethod
     def load(cls, filename):
+        filename = str(filename)
         if not os.path.exists(filename):
             raise FileNotFoundError(f"No such file or directory: '{filename}'")
         if filename.endswith(".npz"):
@@ -174,7 +176,7 @@ class TransformGraph:
             g.node_metadata = eval(props.get('node_metadata', '{}'))
 
             cur.execute("SELECT name FROM nodes")
-            g.nodes = [row[0] for row in cur.fetchall()]
+            g.nodes = list(sorted([row[0] for row in cur.fetchall()]))
 
             cur.execute("SELECT node_name, ref_node FROM node_images")
             for node_name, ref_node in cur.fetchall():
@@ -372,7 +374,7 @@ class TransformGraph:
             return cached_value
         if isinstance(cached_value, str) and cached_value.startswith('ref:'):
             imnode = cached_value.split(':', 1)[1]
-            transformed_image = self.get_transform(imnode, node).transform_image(self.get_image(imnode), relative=True)
+            transformed_image = self.get_transform(imnode, node).transform_image(self.get_image(imnode))
             self.node_images[node] = transformed_image
             return transformed_image
         # If it is not cached, we will need to decompress.
