@@ -4,6 +4,7 @@ import numpy as np
 import scipy
 from .ndarray_shifted import ndarray_shifted
 from .utils import blit, invert_function_numerical, image_is_label
+from threadpoolctl import threadpool_limits
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
@@ -185,6 +186,8 @@ class Transform:
             img = img[None]
         origin, maxpos = self.origin_and_maxpos(img, output_size=output_size, force_size=force_size)
         shape = (maxpos - origin).astype(int)
+        img   = np.ascontiguousarray(img,  dtype=np.float32 if not labels else img.dtype)
+        origin = origin.astype(np.float32)
         # shape = np.round(np.ceil(maxpos - origin)/downsample_output).astype(int) # Maybe this is better?
         # shape = np.asarray(img.shape).astype(int) # Pulled from old code
 
@@ -231,9 +234,10 @@ class Transform:
             disp = mapped.reshape(*chunk_shape, 3).transpose(3, 0, 1, 2)
             block = scipy.ndimage.map_coordinates(img, disp, prefilter=False, order=(0 if labels else 1))
             return inds, block
-        with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
-             for inds, block in pool.map(_process_chunk, chunker(zcoords, ycoords, xcoords, chunksize=4_000_000)):
-                 output[inds] = block
+        with threadpool_limits(limits=1): # Parallelise here, so disable parallelisation on threads
+            with ThreadPoolExecutor(max_workers=os.cpu_count()) as pool:
+                for inds, block in pool.map(_process_chunk, chunker(zcoords, ycoords, xcoords, chunksize=4_000_000)):
+                    output[inds] = block
         return ndarray_shifted(output, origin=origin, only_if_necessary=True) # Added -origin from origin due to TranslateFixed + Rescale on a ndarray_shifted but not sure if this is the right spot
     @staticmethod
     def pretransform(*args, **kwargs):
