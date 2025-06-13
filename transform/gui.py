@@ -94,7 +94,7 @@ def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=Fal
         references = [(g.get_image(r), g.get_transform(r, base[0])) for r in references] 
     return alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type, references=references)
 
-def alignment_gui(movable_image, base_image, transform_type=Translate, references=[], crop=False):
+def alignment_gui(movable_image, base_image, transform_type=None, graph=None, references=[], crop=False):
     """Align images
 
     `base_image` and `movable_image` should be 2D or 3D numpy ndarrays.
@@ -103,7 +103,8 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, reference
 
     `transform_type` is a Transform, either the class itself (an unfitted
     transform), or one with parameters/data.  If the latter, the existing
-    parameters/data can be modified.
+    parameters/data can be modified.  This can also be None, in which case it
+    will be taken from the graph (if it exists) or else set to Identity().
 
     `references` is a list of additional images to show to aid with alingment.
     This should be a list of tuples, where each tuple is (image, transform)
@@ -114,53 +115,69 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, reference
     of tuples, it will show the region ((zmin,zmax),(ymin,ymax),(xmin,xmax))
 
     """
-    if not isinstance(base_image, tuple):
-        base_image = (base_image,)
-    if not isinstance(movable_image, tuple):
-        movable_image = (movable_image,)
-    bi0 = ndarray_shifted(base_image[0])
+    if not isinstance(base_image, (tuple, list)):
+        base_image = [base_image]
+    if not isinstance(movable_image, (tuple, list)):
+        movable_image = [movable_image]
+    if transform_type is None and graph is not None:
+        try:
+            transform_type = graph.get_transform(movable_image[0], base_image[0])
+        except:
+            pass
+    if transform_type is None:
+        transform_type = Identity
+    # Put all of the pre-images and post-images into the same space.  Currently only supported for graphs.
+    if graph is not None and isinstance(movable_image[0], str):
+        movable_image_img = tuple(ndarray_shifted(graph.get_image(n)) if n == movable_image[0] else ndarray_shifted(graph.get_transform(n, movable_image[0]).transform_image(graph.get_image(n))) for n in movable_image)
+    else:
+        movable_image_img = tuple(ndarray_shifted(mi) for mi in movable_image)
+    if graph is not None and isinstance(base_image[0], str):
+        base_image_img = tuple(graph.get_image(n) if n == base_image[0] else graph.get_transform(n, base_image[0]).transform_image(graph.get_image(n)) for n in base_image)
+    else:
+        base_image_img = tuple(base_image)
+    if graph is not None and len(references)>0 and isinstance(references[0], str):
+        references_img = tuple((graph.get_image(n), graph.get_transform(n, base_image[0])) for n in references)
+    else:
+        references_img = tuple(references)
+    bi0 = ndarray_shifted(base_image_img[0])
     outsize = None if crop is False else tuple(zip(bi0.origin, bi0.origin+bi0.shape)) if crop is True else crop
     pretransform = transform_type.pretransform()
     tform = pretransform
     # Test if we are editing an existing transform
-    initial_movable_points = []
-    initial_base_points = []
+    movable_points = []
+    base_points = []
     if isinstance(transform_type, Transform):
         if isinstance(transform_type, PointTransform):
-            initial_movable_points = transform_type.points_start
-            initial_base_points = transform_type.points_end
+            movable_points = list(transform_type.points_start)
+            base_points = list(transform_type.points_end)
         params = transform_type.params.copy()
         transform_type = transform_type.__class__
     else:
         print("Setting default params")
         params = transform_type.DEFAULT_PARAMETERS.copy()
     is_point_transform = issubclass(transform_type, PointTransform)
-    if not is_point_transform:
-        assert initial_base_points is None
-        assert initial_movable_points is None
     _prev_matrix = None # A special case optimisation for linear transforms
     _prev_translate = None # A special case optimisation for linear transforms
     v = napari.Viewer()
     # v.window._qt_viewer._dockLayerList.setVisible(False)
     # v.window._qt_viewer._dockLayerControls.setVisible(False)
-    base_points = [] if initial_base_points is None else list(initial_base_points)
-    movable_points = [] if initial_movable_points is None else list(initial_movable_points)
     tform_type = transform_type
     layers_base = []
-    for bi in base_image:
+    for bi in base_image_img:
         if utils.image_is_label(bi):
             layers_base.append(v.add_labels(bi, name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])))
         else:
             layers_base.append(v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])))
     layers_movable = []
-    for mi in movable_image:
+    for mi in movable_image_img:
+        tfi = ndarray_shifted(tform.transform_image(mi, output_size=outsize, force_size=False))
         if utils.image_is_label(mi):
-            layers_movable.append(v.add_labels(tform.transform_image(mi, output_size=outsize, force_size=False), name="movable", translate=tform.origin_and_maxpos(mi, output_size=outsize, force_size=False)[0]))
+            layers_movable.append(v.add_labels(tfi, name="movable", translate=tfi.origin))
         else:
-            layers_movable.append(v.add_image(tform.transform_image(mi, output_size=outsize, force_size=False), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi, output_size=outsize, force_size=False)[0]))
+            layers_movable.append(v.add_image(tfi, colormap="green", blending="additive", name="movable", translate=tfi.origin))
     layers_reference = []
-    for i,(ri,rt) in enumerate(references):
-        if utils.image_is_label(mi):
+    for i,(ri,rt) in enumerate(references_img):
+        if utils.image_is_label(ri):
             layers_reference.append(v.add_labels(rt.transform_image(ri, output_size=outsize, force_size=False), name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, output_size=outsize, force_size=False)[0]))
         else:
             layers_reference.append(v.add_image(rt.transform_image(ri, output_size=outsize, force_size=False), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, output_size=outsize, force_size=False)[0]))
@@ -333,12 +350,13 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, reference
             tform = tform_type(**params)
         for b in buttons: # Disable buttons while applying transform
             b.enabled = False
-        for layer_movable,mi in zip(layers_movable,movable_image):
+        for layer_movable,mi in zip(layers_movable,movable_image_img):
             # This if statement is a special case optimisation for
             # AffineTransforms only to avoid rerending the image if only the
             # origin/translation has changed.
             if force or _prev_matrix is None or (not isinstance(tform, AffineTransform)) or (isinstance(tform, AffineTransform) and np.any(_prev_matrix != tform.matrix)):
-                layer_movable.data = tform.transform_image(mi, output_size=outsize, labels=utils.image_is_label(mi), force_size=False)
+                tfi = tform.transform_image(mi, output_size=outsize, labels=utils.image_is_label(mi), force_size=False)
+                layer_movable.data = tfi
                 layer_movable.translate = tform.origin_and_maxpos(mi, output_size=outsize, force_size=False)[0]
             else:
                 # This is complicated due to the possibilty of dragging a cropped image out of the crop boundaries
@@ -532,21 +550,22 @@ q: quit
             continue
         if resp[0] in _TRANSFORMS_FOR_INTERACTIVE.keys():
             ttype = _TRANSFORMS_FOR_INTERACTIVE[resp]
-            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t+ttype, references=refs) 
+            t = alignment_gui(nodes_movable, nodes_fixed, transform_type=t+ttype, references=refs, graph=graph) 
         elif resp[0] == "e":
-            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs) 
+            t = alignment_gui(nodes_movable, nodes_fixed, transform_type=t, references=refs, graph=graph) 
         elif resp[0] in "cx" and len(resp) > 1 and resp[1] in _POINT_BASED.keys():
             if isinstance(t, tuple(_POINT_BASED.values())):
                 if resp[0] == "x":
                     t = refine_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
                 elif resp[0] == "c":
                     t = replace_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
-                t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs) 
+                t = alignment_gui(nodes_movable, nodes_fixed, transform_type=t, references=refs, graph=graph) 
             else:
-                print("Previous transform must be a point-based transform"
-                      t = t_hist.pop()
+                print("Previous transform must be a point-based transform")
+                t = t_hist.pop()
         elif resp == "f":
-            t = FlipFixed(z=True, zthickness=nodes_movable_img[0].shape[0]) + t
+            im1 = graph.get_image(nodes_movable[0]) if (graph is not None and isinstance(nodes_movable[0], str)) else nodes_movable[0]
+            t = FlipFixed(z=True, zthickness=im1.shape[0]) + t
         elif resp == "d":
             if len(refs) > 0:
                 _refs = refs

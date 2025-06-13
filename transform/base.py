@@ -8,8 +8,8 @@ from threadpoolctl import threadpool_limits
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
-# - Change naming on align_interactive
 # - Change name of Fixed transforms?
+# - There is a bug in transform_image when input is an ndarray_shifted
 
 def rotation_matrix(z, y, x):
     """Perform *clockwise* rotation in degrees along the three axes"""
@@ -186,6 +186,7 @@ class Transform:
             img = img[None]
         origin, maxpos = self.origin_and_maxpos(img, output_size=output_size, force_size=force_size)
         shape = (maxpos - origin).astype(int)
+        img_offset = ndarray_shifted(img).origin
         img   = np.ascontiguousarray(img,  dtype=np.float32 if not labels else img.dtype)
         origin = origin.astype(np.float32)
         # shape = np.round(np.ceil(maxpos - origin)/downsample_output).astype(int) # Maybe this is better?
@@ -198,9 +199,9 @@ class Transform:
         if img.shape[2] == 1:
             img = img*np.ones((1,1,2), dtype=img.dtype)
         # For memory efficiency, we split coords into chunks
-        zcoords = np.arange(0, shape[0], dtype="int")
-        ycoords = np.arange(0,shape[1], dtype="int")
-        xcoords = np.arange(0,shape[2], dtype="int")
+        zcoords = np.arange(0, shape[0], dtype="float32")
+        ycoords = np.arange(0,shape[1], dtype="float32")
+        xcoords = np.arange(0,shape[2], dtype="float32")
         def chunker(zcoords, ycoords, xcoords, chunksize=10_000_000):
             """It takes lots of memory to do this all at once so we create chunks based on z planes"""
             zsize = len(ycoords)*len(xcoords)
