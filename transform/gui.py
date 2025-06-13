@@ -7,6 +7,7 @@ import vispy
 from . import utils
 from .ndarray_shifted import ndarray_shifted
 
+
 class GraphViewer(napari.Viewer):
     def __init__(self, graph, space=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -93,15 +94,24 @@ def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=Fal
         references = [(g.get_image(r), g.get_transform(r, base[0])) for r in references] 
     return alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type, references=references)
 
-def alignment_gui(movable_image, base_image, transform_type=Translate, initial_base_points=None, initial_movable_points=None, references=[], crop=False, auto_find_peak_radius=2, label_base=False):
+def alignment_gui(movable_image, base_image, transform_type=Translate, references=[], crop=False):
     """Align images
 
-    If `base_image` and/or `movable_image` are tuples, they will be interpreted
-    as multi-channel
+    `base_image` and `movable_image` should be 2D or 3D numpy ndarrays.
+    Alternatively, if they are tuples, they will be interpreted as
+    multi-channel, with each channel shown as a separate napari layer.
 
-    Reference should be a list of tuples, where each tuple is (image, transform)
+    `transform_type` is a Transform, either the class itself (an unfitted
+    transform), or one with parameters/data.  If the latter, the existing
+    parameters/data can be modified.
 
-    "crop" allows you to reduce the drawn area of the transformed image, making transforms faster and use less memory.
+    `references` is a list of additional images to show to aid with alingment.
+    This should be a list of tuples, where each tuple is (image, transform)
+
+    "crop" allows you to reduce the drawn area of the transformed image, making
+    transforms faster and use less memory.  If True, it will only show the area
+    of the movable image that intersects with the first base image.  If a tuple
+    of tuples, it will show the region ((zmin,zmax),(ymin,ymax),(xmin,xmax))
 
     """
     if not isinstance(base_image, tuple):
@@ -113,7 +123,9 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
     pretransform = transform_type.pretransform()
     tform = pretransform
     # Test if we are editing an existing transform
-    if isinstance(transform_type, Transform) and initial_base_points is None and initial_movable_points is None:
+    initial_movable_points = []
+    initial_base_points = []
+    if isinstance(transform_type, Transform):
         if isinstance(transform_type, PointTransform):
             initial_movable_points = transform_type.points_start
             initial_base_points = transform_type.points_end
@@ -134,12 +146,24 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
     base_points = [] if initial_base_points is None else list(initial_base_points)
     movable_points = [] if initial_movable_points is None else list(initial_movable_points)
     tform_type = transform_type
-    if label_base:
-        layers_base = [v.add_labels(bi, name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])) for bi in base_image]
-    else:
-        layers_base = [v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])) for bi in base_image]
-    layers_movable = [v.add_image(tform.transform_image(mi, output_size=outsize, labels=utils.image_is_label(mi), force_size=False), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi, output_size=outsize, force_size=False)[0]) for mi in movable_image]
-    layers_reference = [v.add_image(rt.transform_image(ri, output_size=outsize, labels=utils.image_is_label(ri), force_size=False), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, output_size=outsize, force_size=False)[0]) for i,(ri,rt) in enumerate(references)]
+    layers_base = []
+    for bi in base_image:
+        if utils.image_is_label(bi):
+            layers_base.append(v.add_labels(bi, name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])))
+        else:
+            layers_base.append(v.add_image(bi, colormap="red", blending="additive", name="base", translate=(bi.origin if isinstance(bi, ndarray_shifted) else [0,0,0])))
+    layers_movable = []
+    for mi in movable_image:
+        if utils.image_is_label(mi):
+            layers_movable.append(v.add_labels(tform.transform_image(mi, output_size=outsize, force_size=False), name="movable", translate=tform.origin_and_maxpos(mi, output_size=outsize, force_size=False)[0]))
+        else:
+            layers_movable.append(v.add_image(tform.transform_image(mi, output_size=outsize, force_size=False), colormap="green", blending="additive", name="movable", translate=tform.origin_and_maxpos(mi, output_size=outsize, force_size=False)[0]))
+    layers_reference = []
+    for i,(ri,rt) in enumerate(references):
+        if utils.image_is_label(mi):
+            layers_reference.append(v.add_labels(rt.transform_image(ri, output_size=outsize, force_size=False), name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, output_size=outsize, force_size=False)[0]))
+        else:
+            layers_reference.append(v.add_image(rt.transform_image(ri, output_size=outsize, force_size=False), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, output_size=outsize, force_size=False)[0]))
     if is_point_transform:
         layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
         layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, 1, .6, 1])
@@ -193,7 +217,7 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
             if e.type != "mouse_press":
                 return
             # If right click, find the nearby peak
-            if e.button == 2 and not label_base: # Right click
+            if e.button == 2 and not isinstance(best_layer(layers_base), napari.layers.Labels): # Right click
                 try:
                     pos = find_local_maximum(best_layer(layers_base).data, e.position)
                 except RecursionError:
@@ -220,7 +244,7 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
             if e.type != "mouse_press":
                 return
             # If right click, find the nearby peak
-            if e.button == 2: # Right click
+            if e.button == 2 and not isinstance(best_layer(layers_movable), napari.layers.Labels): # Right click
                 bl = best_layer(layers_movable)
                 try:
                     pos = find_local_maximum(bl.data, e.position - bl.translate) + bl.translate
@@ -402,7 +426,7 @@ def alignment_gui(movable_image, base_image, transform_type=Translate, initial_b
     print(tform)
     return tform
 
-def align_interactive(nodes_movable, nodes_fixed, graph=None, start=None, references=[], label_base=False):
+def align_interactive(nodes_movable, nodes_fixed, graph=None, start=None, references=[]):
     _TRANSFORMS_FOR_INTERACTIVE = {}
     _queue = Transform.__subclasses__()
     _reserved = "fezudsSqxc"
@@ -423,7 +447,7 @@ def align_interactive(nodes_movable, nodes_fixed, graph=None, start=None, refere
     # Generate the strings for printing the help screen
     _PARAMETRIC_NAMES = "\n".join([f"{k}: {v.NAME}" for k,v in _NON_POINT_BASED.items()])
     _POINT_NAMES = "\n".join([f"{k}: {v.NAME}" for k,v in _POINT_BASED.items()])
-    _EXTENSION_NAMES = "\n".join([f"x{k}: Extend previous point-based transform with '{v.NAME}'" for k,v in _POINT_BASED.items()])
+    _EXTENSION_NAMES = "\n".join([f"x_: Extend previous point-based transform with a point-based transform" for k,v in _POINT_BASED.items()])
     _CONVERSION_NAMES = "\n".join([f"c{k}: Convert previous point-based transform to '{v.NAME}'" for k,v in _POINT_BASED.items()])
     _TEXT = f"""Please choose an option:
 
@@ -435,16 +459,17 @@ Point-based transforms
 ----------------------
 {_POINT_NAMES}
 
-Extensions
-----------
-{_EXTENSION_NAMES}
-{_CONVERSION_NAMES}
+Modify last transform
+---------------------
+e: edit previous transform
+z: remove the previous transform
+x_: Extend previous point-based transform with a different point-based transform
+c_: Convert previous point-based transform to a different point-based transform
+(where _ is the letter key for any point based transform)
 
 Other
 -----
 f: flip along z axis
-e: edit current transform
-z: remove the top transform
 u: revert most recent change
 d: toggle references on/off
 s: save to graph (but not to disk)
@@ -484,6 +509,8 @@ q: quit
     info = _TEXT
     # Remove save options if we don't have a graph
     if graph is None: 
+        info = "\n".join([l for l in info.split("\n") if l[0:3] != "d: "])
+    if len(references) == 0:
         info = "\n".join([l for l in info.split("\n") if l[0:3].lower() != "s: "])
     # Put all of the pre-images and post-images into the same space.  Currently only supported for graphs.
     if graph is not None and isinstance(nodes_movable[0], str):
@@ -505,15 +532,19 @@ q: quit
             continue
         if resp[0] in _TRANSFORMS_FOR_INTERACTIVE.keys():
             ttype = _TRANSFORMS_FOR_INTERACTIVE[resp]
-            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t+ttype, references=refs, label_base=label_base) 
+            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t+ttype, references=refs) 
         elif resp[0] == "e":
-            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs, label_base=label_base) 
+            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs) 
         elif resp[0] in "cx" and len(resp) > 1 and resp[1] in _POINT_BASED.keys():
-            if resp[0] == "x":
-                t = refine_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
-            elif resp[0] == "c":
-                t = replace_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
-            t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs, label_base=label_base) 
+            if isinstance(t, tuple(_POINT_BASED.values())):
+                if resp[0] == "x":
+                    t = refine_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
+                elif resp[0] == "c":
+                    t = replace_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
+                t = alignment_gui(nodes_movable_img, nodes_fixed_img, transform_type=t, references=refs) 
+            else:
+                print("Previous transform must be a point-based transform"
+                      t = t_hist.pop()
         elif resp == "f":
             t = FlipFixed(z=True, zthickness=nodes_movable_img[0].shape[0]) + t
         elif resp == "d":
@@ -551,7 +582,7 @@ q: quit
             break
         else:
             t = t_hist.pop()
-            print("Invalid choice '{resp}'")
+            print(f"Invalid choice '{resp}'")
         # Match individual points/cells
     print("Transform is:", t)
     return t
