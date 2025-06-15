@@ -40,60 +40,6 @@ class GraphViewer(napari.Viewer):
             data = self.graph.get_transform(space, self.space).transform(data)
         return super().add_points(data, **kwargs)
 
-# Deprecated, functionality is in alignment_gui
-def edit_transform(movable_image, base_image, transform):
-    return alignment_gui(movable_image, base_image, transform_type=transform.__class__, initial_movable_points=transform.points_start, initial_base_points=transform.points_end)
-
-def plot_from_graph(g, ims, output_space=None):
-    """Given a graph g, plot each of the images in the list ims, using the first as a coordinate reference (base).
-
-    Each element in ims can either be the name of a node on the graph (in which
-    case the image from that node will be used, or a tuple of two elements where
-    the first element is the image as an ndarray and the second element is the
-    name of the node to start the transform (i.e., the coordinate space of the
-    image).
-
-    The list ims must be at least length 2.
-    """
-    if isinstance(ims[0], tuple):
-        base_image = ims[0]
-        base_space = ims[1]
-    else:
-        base_space = ims[0]
-        base_image = g.get_image(base_space)
-    if output_space is not None:
-        base_image = g.get_transform(base_space, output_space).transform_image(base_image, labels=utils.image_is_label(base_image))
-        base_space = output_space
-    els = []
-    for im in ims[1:]:
-        if isinstance(im, tuple):
-            els.append((im[0], g.get_transform(im[1], base_space)))
-        else:
-            gi = g.get_image(im)
-            if gi.shape[0] == 1:
-                gi = gi * np.ones((2,1,1)) # TODO Hack for now when we can't see 1-plane images in napari
-            els.append((gi, g.get_transform(im, base_space)))
-    references = []
-    if len(els) > 1:
-        references = els[1:]
-    alignment_gui(els[0][0], base_image, els[0][1], references=references)
-
-def graph_alignment_gui(g, movable, base, transform_type=None, add_transform=False, references=[]):
-    # TODO Currently assumes all base images are in the same space
-    if not isinstance(base, (list, tuple)):
-        base = [base]
-    if not isinstance(movable, (list, tuple)):
-        movable = [movable]
-    base_images = [g.get_image(bi) for bi in base]
-    movable_images = [g.get_image(mi) for mi in movable]
-    if transform_type is None:
-        transform_type = g.get_transform(movable[0], base[0])
-    elif add_transform:
-        transform_type = g.get_transform(movable[0], base[0]) + transform_type
-    if references:
-        references = [(g.get_image(r), g.get_transform(r, base[0])) for r in references] 
-    return alignment_gui(tuple(movable_images), tuple(base_images), transform_type=transform_type, references=references)
-
 def alignment_gui(movable_image, base_image, transform_type=None, graph=None, references=[], crop=False):
     """Align images
 
@@ -556,9 +502,9 @@ q: quit
         elif resp[0] in "cx" and len(resp) > 1 and resp[1] in _POINT_BASED.keys():
             if isinstance(t, tuple(_POINT_BASED.values())):
                 if resp[0] == "x":
-                    t = refine_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
+                    t = _refine_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
                 elif resp[0] == "c":
-                    t = replace_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
+                    t = _replace_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
                 t = alignment_gui(nodes_movable, nodes_fixed, transform_type=t, references=refs, graph=graph) 
             else:
                 print("Previous transform must be a point-based transform")
@@ -606,10 +552,10 @@ q: quit
     print("Transform is:", t)
     return t
 
-def refine_transform(transform, transformtype, **kwargs):
+def _refine_transform(transform, transformtype, **kwargs):
     start = transform.transform(transform.pretransform().invert().transform(transform.points_start))
     end = transform.points_end
     return transform + transformtype(points_start=start, points_end=end, **kwargs)
 
-def replace_transform(transform, transformtype, **kwargs):
+def _replace_transform(transform, transformtype, **kwargs):
     return transform.pretransform() + transformtype(points_start=transform.points_start, points_end=transform.points_end, **kwargs)

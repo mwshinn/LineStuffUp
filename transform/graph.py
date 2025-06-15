@@ -447,3 +447,16 @@ class TransformGraph:
         g.view()
         if filename is None: # Temporary file
             os.unlink(fn)
+
+# We put this file here to avoid circular imports
+def load(fn):
+    """Load a Graph or Transform from a file"""
+    try:
+        return TransformGraph.load(fn)
+    except sqlite3.DatabaseError:
+        pass
+    try:
+        return transform.Transform.load(fn)
+    except:
+        raise IOError("Invalid file type, can only load Transforms or Graphs.")
+
