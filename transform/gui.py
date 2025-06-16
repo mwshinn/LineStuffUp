@@ -58,7 +58,8 @@ def alignment_gui(movable_image, base_image, transform_type=None, graph=None, re
     "crop" allows you to reduce the drawn area of the transformed image, making
     transforms faster and use less memory.  If True, it will only show the area
     of the movable image that intersects with the first base image.  If a tuple
-    of tuples, it will show the region ((zmin,zmax),(ymin,ymax),(xmin,xmax))
+    of numbers, it will show the region (zmax,ymax,xmax).  If a tuple of tuples,
+    it will show the region ((zmin,zmax),(ymin,ymax),(xmin,xmax)).
 
     """
     if not isinstance(base_image, (tuple, list)):

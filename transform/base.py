@@ -8,8 +8,6 @@ from threadpoolctl import threadpool_limits
 
 # TODO:
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
-# - Change name of Fixed transforms?
-# - There is a bug in transform_image when input is an ndarray_shifted
 
 def rotation_matrix(z, y, x):
     """Perform *clockwise* rotation in degrees along the three axes"""
@@ -180,6 +178,11 @@ class Transform:
         This can be overridden by more efficient implementations in subclasses.
 
         """
+        # First, if we have an ndarray_shifted object, shift it first with another transform.
+        if isinstance(img, ndarray_shifted) and np.any(img.origin != np.asarray([0,0,0])):
+            shift = TranslateFixed(z=img.origin[0], y=img.origin[1], x=img.origin[2])
+            return (shift + self).transform_image(np.asarray(img), output_size=output_size, labels=labels, force_size=force_size)
+        # Housekeeping
         if labels is None:
             labels = image_is_label(img)
         if img.ndim == 2:
@@ -300,7 +303,7 @@ class AffineTransform:
     def transform_image(self, image, output_size=None, labels=None, force_size=True):
         # Optimisation for the case where no image transform needs to be
         # performed.
-        if np.all(self.matrix == np.eye(3)):
+        if np.all(self.matrix == np.eye(3)) and ((not isinstance(image, ndarray_shifted)) or np.all(image.origin==[0,0,0])):
             if output_size is None:
                 return ndarray_shifted(image, origin=-self.shift, only_if_necessary=True)
             # else:
