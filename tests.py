@@ -164,7 +164,7 @@ for simple, complicated in [(Translate, _TranslateComplicated), (TranslateRotate
     # assert corr > .95, f"Correlation for normal and complicated version of  {simple} was too low with input bounds, it was {corr}"
 
 # Test graphs
-g = TransformGraph("mygraph")
+g = Graph("mygraph")
 g.add_node("a")
 g.add_node("c", image=np.random.randn(2,3,4))
 g.add_node("bx")
@@ -178,5 +178,5 @@ assert g == g, "Self-equality failed"
 with tempfile.TemporaryDirectory() as tmpdir:
     fn = Path(tmpdir).joinpath("file.db")
     g.save(fn)
-    g2 = TransformGraph.load(fn)
+    g2 = Graph.load(fn)
     assert g == g2

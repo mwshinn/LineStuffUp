@@ -280,12 +280,12 @@ the previously performed transform will be returned.
 With most real-world data, many Transforms will be needed, and all of these
 Transforms will relate to each other, possibly in complex ways.  It can quickly
 become difficult to manage which Transform takes you from which space to which
-other space.  We can organise all of these Transforms into a TransformGraph.
+other space.  We can organise all of these Transforms into a Graph.
 
-A TransformGraph is an undirected graph of Transforms from each space to each
+A Graph is an undirected graph of Transforms from each space to each
 other space.  Each space (e.g., image) is identified by a unique name, and is
 represented by a node in the graph.  Each edge connecting the nodes in the graph
-is a Transform.  To create a new node in a TransformGraph ``g``, run
+is a Transform.  To create a new node in a Graph ``g``, run
 ``g.add_node(node_name)``.  To specify a Transform between two nodes, i.e., an
 edge, run ``g.add_edge(node1, node2, tform)``.
 
@@ -303,7 +303,7 @@ To visualise the structure of the graph, run ``g.visualise()``.  For extremely
 large graphs, you can use the "nearby" argument to specify a node, and the
 visualisation will only include nodes directly connected to the given node.
 
-Optionally, a TransformGraph may also contain the raw images themselves.  This
+Optionally, a Graph may also contain the raw images themselves.  This
 is accomplished by passing the "image" argument to ``g.add_node``.  The images
 will be aggressively compressed with minimal loss in quality through the use of
 video codecs, with compression rates on high-resolution microscopy images often

@@ -5,9 +5,10 @@ from . import utils
 import os
 import tempfile
 import sqlite3
+import shutil 
 
 
-class TransformGraph:
+class Graph:
     def __init__(self, name):
         # NOTE: If you change the constructor or internal data structure, you also need to change the load and save methods.
         self.name = name
@@ -33,7 +34,7 @@ class TransformGraph:
     def __eq__(self, other):
         # NOTE: This equality check does not compare image data for performance reasons.
         # It only checks if the same nodes have images.
-        return (isinstance(other, TransformGraph) and
+        return (isinstance(other, Graph) and
                 self.name == other.name and
                 set(self.nodes) == set(other.nodes) and
                 self.edges == other.edges and
@@ -59,11 +60,13 @@ class TransformGraph:
         raise ValueError(f"A graph cannot contain the item '{item}'")
 
     def save(self, filename=None):
-        filename = str(filename)
-        if filename is None:
+        if filename and self.filename:
+            shutil.copy(self.filename, filename)
+        if not filename:
             filename = self.filename
-        if filename is None:
+        if not filename:
             raise ValueError("Filename must be provided to save.")
+        filename = str(filename)
         if filename.endswith(".npz"):
             raise ValueError("Saving in npz format is no longer supported")
         if "." not in filename:
@@ -452,7 +455,7 @@ class TransformGraph:
 def load(fn):
     """Load a Graph or Transform from a file"""
     try:
-        return TransformGraph.load(fn)
+        return Graph.load(fn)
     except sqlite3.DatabaseError:
         pass
     try:
@@ -460,3 +463,4 @@ def load(fn):
     except:
         raise IOError("Invalid file type, can only load Transforms or Graphs.")
 
+TransformGraph = Graph # Backward compatibility

@@ -6,7 +6,7 @@ import tempfile
 import numpy as np
 
 # Import the class to be tested
-from transform import TransformGraph
+from transform import Graph
 from transform import Identity, TranslateFixed, PointTransformNoInverse, utils
 import transform
 
@@ -15,7 +15,7 @@ class InvertibleError(PointTransformNoInverse):
     def _transform(self, points, points_start, points_end):
         return points
 
-class TestTransformGraph(unittest.TestCase):
+class TestGraph(unittest.TestCase):
 
     def setUp(self):
         """Set up a temporary directory for test files."""
@@ -33,7 +33,7 @@ class TestTransformGraph(unittest.TestCase):
 
     def test_01_initialization(self):
         """Test basic graph initialization."""
-        g = TransformGraph("MyTestGraph")
+        g = Graph("MyTestGraph")
         self.assertEqual(g.name, "MyTestGraph")
         self.assertEqual(g.nodes, [])
         self.assertEqual(g.edges, {})
@@ -41,7 +41,7 @@ class TestTransformGraph(unittest.TestCase):
 
     def test_02_add_and_remove_node(self):
         """Test adding and removing nodes."""
-        g = TransformGraph("NodeTest")
+        g = Graph("NodeTest")
         img1 = self._create_sample_image(1)
         
         # Add a node with an image
@@ -75,7 +75,7 @@ class TestTransformGraph(unittest.TestCase):
 
     def test_03_add_and_remove_edge(self):
         """Test adding and removing edges."""
-        g = TransformGraph("EdgeTest")
+        g = Graph("EdgeTest")
         g.add_node("A")
         g.add_node("B")
         g.add_node("C")
@@ -101,7 +101,7 @@ class TestTransformGraph(unittest.TestCase):
 
     def test_04_save_and_load_sqlite(self):
         """Test saving to and loading from a SQLite database."""
-        g_orig = TransformGraph("DBSaveLoadTest")
+        g_orig = Graph("DBSaveLoadTest")
         img1 = self._create_sample_image(10)
         img2 = self._create_sample_image(20)
 
@@ -116,7 +116,7 @@ class TestTransformGraph(unittest.TestCase):
         self.assertTrue(os.path.exists(self.db_path))
 
         # Load into a new graph object
-        g_loaded = TransformGraph.load(self.db_path)
+        g_loaded = Graph.load(self.db_path)
 
         self.assertEqual(g_orig.name, g_loaded.name)
         self.assertEqual(sorted(g_orig.nodes), sorted(g_loaded.nodes))
@@ -141,7 +141,7 @@ class TestTransformGraph(unittest.TestCase):
 
     def test_05_selective_image_saving(self):
         """Test that only modified images are saved."""
-        g = TransformGraph("SelectiveSave")
+        g = Graph("SelectiveSave")
         img1 = self._create_sample_image(1)
         img2 = self._create_sample_image(2)
 
@@ -155,7 +155,7 @@ class TestTransformGraph(unittest.TestCase):
         self.assertEqual(g.compressed_node_images, {}) # Dirty dict should be cleared
 
         # Load, modify one image, and resave
-        g_loaded = TransformGraph.load(self.db_path)
+        g_loaded = Graph.load(self.db_path)
         self.assertEqual(g_loaded.compressed_node_images, {})
 
         new_img2 = self._create_sample_image(99)
@@ -169,7 +169,7 @@ class TestTransformGraph(unittest.TestCase):
         self.assertEqual(g_loaded.compressed_node_images, {})
 
         # Load again and verify changes
-        g_final = TransformGraph.load(self.db_path)
+        g_final = Graph.load(self.db_path)
         np.testing.assert_array_equal(g_final.get_image("node1"), img1)
         np.testing.assert_array_equal(g_final.get_image("node2"), new_img2)
 
@@ -194,7 +194,7 @@ class TestTransformGraph(unittest.TestCase):
         )
 
         # Load the .npz file
-        g = TransformGraph.load(self.npz_path)
+        g = Graph.load(self.npz_path)
         
         # Check data integrity
         self.assertEqual(g.name, name)
@@ -203,7 +203,7 @@ class TestTransformGraph(unittest.TestCase):
 
     def test_07_get_transform(self):
         """Test pathfinding for transforms."""
-        g = TransformGraph("PathTest")
+        g = Graph("PathTest")
         g.add_node("A")
         g.add_node("B")
         g.add_node("C")
@@ -231,12 +231,12 @@ class TestTransformGraph(unittest.TestCase):
 
     def test_08_unload(self):
         """Test unloading images from the cache."""
-        g = TransformGraph("UnloadTest")
+        g = Graph("UnloadTest")
         img1 = self._create_sample_image(1)
         g.add_node("node1", image=img1)
         g.save(self.db_path)
 
-        g_loaded = TransformGraph.load(self.db_path)
+        g_loaded = Graph.load(self.db_path)
         # Load image into cache
         g_loaded.get_image("node1")
         self.assertIsInstance(g_loaded.node_images["node1"], np.ndarray)
@@ -250,18 +250,19 @@ class TestTransformGraph(unittest.TestCase):
     
     def test_09_remove_node_with_image_from_db(self):
         """Test that removing a node also removes its image on save."""
-        g = TransformGraph("RemoveFromDB")
+        g = Graph("RemoveFromDB")
         g.add_node("n1", image=self._create_sample_image(1))
         g.add_node("n2", image=self._create_sample_image(2))
         g.save(self.db_path)
         
         # Load, remove a node, and save again
-        g_loaded = TransformGraph.load(self.db_path)
+        g_loaded = Graph.load(self.db_path)
         g_loaded.remove_node("n1")
+        self.assertNotIn("n1", g_loaded.nodes)
         g_loaded.save()
         
         # Load final version and check
-        g_final = TransformGraph.load(self.db_path)
+        g_final = Graph.load(self.db_path)
         self.assertIn("n2", g_final.nodes)
         self.assertNotIn("n1", g_final.nodes)
         self.assertNotIn("n1", g_final.node_images)
@@ -270,6 +271,27 @@ class TestTransformGraph(unittest.TestCase):
         
         # Verify the image for n2 is still there
         np.testing.assert_array_equal(g_final.get_image("n2"), self._create_sample_image(2))
+    def test_10_new_filename(self):
+        """Test renaming a graph file by saving under a new name"""
+        g = Graph("RemoveFromDB")
+        img1 = self._create_sample_image(1)
+        g.add_node("n1", image=img1)
+        img2 = self._create_sample_image(2)
+        g.add_node("n2", image=img2)
+        g.save(self.db_path)
+        img1_new = self._create_sample_image(3)
+        img3 = self._create_sample_image(4)
+        g.replace_node_image("n1", image=img1_new)
+        g.add_node("n3", image=img3)
+        g.save(self.db_path+".new")
+        g_loaded = Graph.load(self.db_path+".new")
+        self.assertIn("n1", g_loaded.nodes)
+        self.assertIn("n1", g_loaded.node_images)
+        self.assertIn("n3", g_loaded.nodes)
+        self.assertIn("n3", g_loaded.node_images)
+        np.testing.assert_array_equal(g_loaded.get_image("n1"), img1_new)
+        np.testing.assert_array_equal(g_loaded.get_image("n3"), img3)
+        
 
 
 if __name__ == '__main__':

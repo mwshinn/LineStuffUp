@@ -10,7 +10,6 @@ from threadpoolctl import threadpool_limits
 # - implement posttransforms, allowing the unfitted transform to be on the left hand side
 # - Change name of Fixed transforms?
 # - There is a bug in transform_image when input is an ndarray_shifted
-# - Rename TransformGraph to Graph?
 
 def rotation_matrix(z, y, x):
     """Perform *clockwise* rotation in degrees along the three axes"""
