@@ -1,3 +1,5 @@
+# LineStuffUp
+
 To install, you need the following packages:
 
 > pip install numpy scipy napari magicgui vispy scikit-image imageio imageio-ffmpeg
@@ -169,20 +171,20 @@ transform points, as well as perform a composition of two transforms.
 
 ``` python
 import numpy as np
-import transform as tf
+import linestuffup as lsu
 
 # Example 1
-t1 = tf.TranslateFixed(x=3, y=4, z=5)
+t1 = lsu.TranslateFixed(x=3, y=4, z=5)
 assert np.all(t1.transform([10, 20, 30]) == [15, 24, 33])
 assert np.all(t1.transform([[10, 20, 30], [40, 50, 60]]) == [[15, 24, 33], [45, 54, 63]])
 
 # Example 2
-t2 = tf.TranslateFixed(z=1, y=1, x=1)
+t2 = lsu.TranslateFixed(z=1, y=1, x=1)
 t = t1 + t2
 assert np.all(t.transform([10, 20, 30]) == [16, 25, 34])
 
 # Example 3
-t = t1 + tf.Identity()
+t = t1 + lsu.Identity()
 assert np.all(t.transform([10, 20, 30]) == t1.transform([10, 20, 30]))
 ```
 
@@ -194,8 +196,8 @@ from skimage.data import cells3d
 im = cells3d()[:,1]
 
 # Define the Transform and apply it to the image
-import transform as tf
-t = tf.TranslateRotateFixed(zrotate=30, x=60)
+import linestuffup as lsu
+t = lsu.TranslateRotateFixed(zrotate=30, x=60)
 im_rotate = t.transform_image(im)
 
 # Visualise the result

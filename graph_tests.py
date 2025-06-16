@@ -6,9 +6,9 @@ import tempfile
 import numpy as np
 
 # Import the class to be tested
-from transform import Graph
-from transform import Identity, TranslateFixed, PointTransformNoInverse, utils
-import transform
+from linestuffup import Graph
+from linestuffup import Identity, TranslateFixed, PointTransformNoInverse, utils
+import linestuffup as lsu
 
 class InvertibleError(PointTransformNoInverse):
     DEFAULT_PARAMETERS = {"extent": 1, "invert": False}
@@ -219,7 +219,7 @@ class TestGraph(unittest.TestCase):
 
         # Chained transform
         t_ac = g.get_transform("A", "C")
-        self.assertTrue(np.all(t_ac.transform([1, 2, 3]) == transform.TranslateFixed(x=15).transform([1, 2, 3])))
+        self.assertTrue(np.all(t_ac.transform([1, 2, 3]) == lsu.TranslateFixed(x=15).transform([1, 2, 3])))
         
         # Identity transform
         t_aa = g.get_transform("A", "A")

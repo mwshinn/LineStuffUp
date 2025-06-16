@@ -9,7 +9,7 @@ import shutil
 
 
 class Graph:
-    def __init__(self, name):
+    def __init__(self, name=""):
         # NOTE: If you change the constructor or internal data structure, you also need to change the load and save methods.
         self.name = name
         self.nodes = [] # List of node names
@@ -60,6 +60,7 @@ class Graph:
         raise ValueError(f"A graph cannot contain the item '{item}'")
 
     def save(self, filename=None):
+        assert not os.path.isfile(filename), "Save path already exists"
         if filename and self.filename:
             shutil.copy(self.filename, filename)
         if not filename:
