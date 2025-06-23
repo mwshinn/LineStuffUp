@@ -232,7 +232,7 @@ def decompress_image(data, kind):
         return np.asarray(ims, dtype="float32")
     if int(kind[0]) == 3:
         imgfile = zlib.decompress(zlib.decompress(data))
-        return np.frombuffer(imgfile, dtype=kind[1]).reshape(*kind[2:].astype('int'))
+        return np.frombuffer(imgfile, dtype=kind[1]).reshape(*np.asarray(kind[2:]).astype('int'))
     raise ValueError(f"Invalid kind {kind}")
 
 def invert_function_numerical(func, point):

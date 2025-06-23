@@ -40,14 +40,14 @@ class GraphViewer(napari.Viewer):
             data = self.graph.get_transform(space, self.space).transform(data)
         return super().add_points(data, **kwargs)
 
-def alignment_gui(movable_image, base_image, transform_type=None, graph=None, references=[], crop=False):
+def alignment_gui(movable_image, base_image, transform=None, graph=None, references=[], crop=False, transform_type=None):
     """Align images
 
     `base_image` and `movable_image` should be 2D or 3D numpy ndarrays.
     Alternatively, if they are tuples, they will be interpreted as
     multi-channel, with each channel shown as a separate napari layer.
 
-    `transform_type` is a Transform, either the class itself (an unfitted
+    `transform` is a Transform, either the class itself (an unfitted
     transform), or one with parameters/data.  If the latter, the existing
     parameters/data can be modified.  This can also be None, in which case it
     will be taken from the graph (if it exists) or else set to Identity().
@@ -60,19 +60,22 @@ def alignment_gui(movable_image, base_image, transform_type=None, graph=None, re
     of the movable image that intersects with the first base image.  If a tuple
     of numbers, it will show the region (zmax,ymax,xmax).  If a tuple of tuples,
     it will show the region ((zmin,zmax),(ymin,ymax),(xmin,xmax)).
-
     """
+    if transform_type is not None:
+        print("The `transform_type` parameter is deprecated, use `transform` instead")
+    if transform is None:
+        transform = transform_type
     if not isinstance(base_image, (tuple, list)):
         base_image = [base_image]
     if not isinstance(movable_image, (tuple, list)):
         movable_image = [movable_image]
-    if transform_type is None and graph is not None:
+    if transform is None and graph is not None:
         try:
-            transform_type = graph.get_transform(movable_image[0], base_image[0])
+            transform = graph.get_transform(movable_image[0], base_image[0])
         except:
             pass
-    if transform_type is None:
-        transform_type = Identity
+    if transform is None:
+        transform = Identity
     # Put all of the pre-images and post-images into the same space.  Currently only supported for graphs.
     if graph is not None and isinstance(movable_image[0], str):
         movable_image_img = tuple(ndarray_shifted(graph.get_image(n)) if n == movable_image[0] else ndarray_shifted(graph.get_transform(n, movable_image[0]).transform_image(graph.get_image(n))) for n in movable_image)
@@ -88,27 +91,27 @@ def alignment_gui(movable_image, base_image, transform_type=None, graph=None, re
         references_img = tuple(references)
     bi0 = ndarray_shifted(base_image_img[0])
     outsize = None if crop is False else tuple(zip(bi0.origin, bi0.origin+bi0.shape)) if crop is True else crop
-    pretransform = transform_type.pretransform()
+    pretransform = transform.pretransform()
     tform = pretransform
     # Test if we are editing an existing transform
     movable_points = []
     base_points = []
-    if isinstance(transform_type, Transform):
-        if isinstance(transform_type, PointTransform):
-            movable_points = list(transform_type.points_start)
-            base_points = list(transform_type.points_end)
-        params = transform_type.params.copy()
-        transform_type = transform_type.__class__
+    if isinstance(transform, Transform):
+        if isinstance(transform, PointTransform):
+            movable_points = list(transform.points_start)
+            base_points = list(transform.points_end)
+        params = transform.params.copy()
+        transform = transform.__class__
     else:
         print("Setting default params")
-        params = transform_type.DEFAULT_PARAMETERS.copy()
-    is_point_transform = issubclass(transform_type, PointTransform)
+        params = transform.DEFAULT_PARAMETERS.copy()
+    is_point_transform = issubclass(transform, PointTransform)
     _prev_matrix = None # A special case optimisation for linear transforms
     _prev_translate = None # A special case optimisation for linear transforms
     v = napari.Viewer()
     # v.window._qt_viewer._dockLayerList.setVisible(False)
     # v.window._qt_viewer._dockLayerControls.setVisible(False)
-    tform_type = transform_type
+    tform_type = transform
     layers_base = []
     for bi in base_image_img:
         if utils.image_is_label(bi):
@@ -372,8 +375,8 @@ def alignment_gui(movable_image, base_image, transform_type=None, graph=None, re
                 apply_transform(force=False)
         w.changed.connect(widget_callback)
         widgets.append(w)
-        if p in transform_type.GUI_DRAG_PARAMETERS:
-            _MOUSE_DRAG_WIDGETS[transform_type.GUI_DRAG_PARAMETERS.index(p)] = w
+        if p in transform.GUI_DRAG_PARAMETERS:
+            _MOUSE_DRAG_WIDGETS[transform.GUI_DRAG_PARAMETERS.index(p)] = w
     dynamic_update = magicgui.widgets.CheckBox(value=False, label="Dynamic update")
     if len(params) > 0:
         widgets.append(dynamic_update)
@@ -391,7 +394,11 @@ def alignment_gui(movable_image, base_image, transform_type=None, graph=None, re
     print(tform)
     return tform
 
-def align_interactive(nodes_movable, nodes_fixed, graph=None, start=None, references=[]):
+def align_interactive(nodes_movable, nodes_fixed, graph=None, transform=None, references=[], start=None):
+    if start is not None:
+        print("The `start` parameter is deprecated, use `transform` instead")
+    if transform is None:
+        transform = start
     _TRANSFORMS_FOR_INTERACTIVE = {}
     _queue = Transform.__subclasses__()
     _reserved = "fezudsSqxc"
@@ -455,20 +462,20 @@ q: quit
             assert isinstance(r, tuple) and len(r) == 2 and isinstance(r[0], np.ndarray) and isinstance(r[1], Transform), "Each reference must be a tuple, where the first element is an image as an ndarray and the second is a Transform.  Alternatively, a reference can be the node name in the Graph (if applicable)."
             refs.append(r)
     # Parse the starting transform, falling back to Identity
-    if start is None:
+    if transform is None:
         try: # If we have a graph and there is a link between the nodes
             t = graph.get_transform(nodes_movable[0], nodes_fixed[0])
             print("Using existing transform as a starting place")
         except (AssertionError, NameError, RuntimeError, AttributeError):
             t = Identity()
-    elif isinstance(start, str) and graph is not None:
-        t = graph.get_transform(start, nodes_fixed[0])
+    elif isinstance(transform, str) and graph is not None:
+        t = graph.get_transform(transform, nodes_fixed[0])
         while not isinstance(t, AffineTransform): # Use only the linear portion
             print("Warning: removing nonlinear portion of starting transform.")
             t = t.pretransform()
         #refs.append((g.get_image(start), t))
-    elif isinstance(start, Transform): # start is a transform
-        t = start
+    elif isinstance(transform, Transform): # start is a transform
+        t = transform
     else:
         raise ValueError("Invalid starting transform")
     info = _TEXT
@@ -497,16 +504,16 @@ q: quit
             continue
         if resp[0] in _TRANSFORMS_FOR_INTERACTIVE.keys():
             ttype = _TRANSFORMS_FOR_INTERACTIVE[resp]
-            t = alignment_gui(nodes_movable, nodes_fixed, transform_type=t+ttype, references=refs, graph=graph) 
+            t = alignment_gui(nodes_movable, nodes_fixed, transform=t+ttype, references=refs, graph=graph) 
         elif resp[0] == "e":
-            t = alignment_gui(nodes_movable, nodes_fixed, transform_type=t, references=refs, graph=graph) 
+            t = alignment_gui(nodes_movable, nodes_fixed, transform=t, references=refs, graph=graph) 
         elif resp[0] in "cx" and len(resp) > 1 and resp[1] in _POINT_BASED.keys():
             if isinstance(t, tuple(_POINT_BASED.values())):
                 if resp[0] == "x":
                     t = _refine_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
                 elif resp[0] == "c":
                     t = _replace_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
-                t = alignment_gui(nodes_movable, nodes_fixed, transform_type=t, references=refs, graph=graph) 
+                t = alignment_gui(nodes_movable, nodes_fixed, transform=t, references=refs, graph=graph) 
             else:
                 print("Previous transform must be a point-based transform")
                 t = t_hist.pop()

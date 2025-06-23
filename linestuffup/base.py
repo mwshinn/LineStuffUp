@@ -1,5 +1,5 @@
 import os
-import concurrent
+import concurrent.futures
 import numpy as np
 import scipy
 from .ndarray_shifted import ndarray_shifted
