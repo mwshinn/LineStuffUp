@@ -132,8 +132,8 @@ def alignment_gui(movable_image, base_image, transform=None, graph=None, referen
         else:
             layers_reference.append(v.add_image(rt.transform_image(ri, output_size=outsize, force_size=False), colormap="blue", blending="additive", name=f"reference_{i}", translate=rt.origin_and_maxpos(ri, output_size=outsize, force_size=False)[0]))
     if is_point_transform:
-        layer_base_points = v.add_points(None, ndim=3, name="base points", edge_width=0, face_color=[1, .6, .6, 1])
-        layer_movable_points = v.add_points(None, ndim=3, name="movable points", edge_width=0, face_color=[.6, 1, .6, 1])
+        layer_base_points = v.add_points(None, ndim=3, name="base points", border_width=0, face_color=[1, .6, .6, 1])
+        layer_movable_points = v.add_points(None, ndim=3, name="movable points", border_width=0, face_color=[.6, 1, .6, 1])
         layer_base_points.data = base_points
         layer_movable_points.data = movable_points
         layer_base_points.editable = False
@@ -185,8 +185,9 @@ def alignment_gui(movable_image, base_image, transform=None, graph=None, referen
                 return
             # If right click, find the nearby peak
             if e.button == 2 and not isinstance(best_layer(layers_base), napari.layers.Labels): # Right click
+                bl = best_layer(layers_base)
                 try:
-                    pos = find_local_maximum(best_layer(layers_base).data, e.position)
+                    pos = find_local_maximum(bl.data, e.position - bl.translate) + bl.translate
                 except RecursionError:
                     pos = e.position
             else:
@@ -481,9 +482,9 @@ q: quit
     info = _TEXT
     # Remove save options if we don't have a graph
     if graph is None: 
-        info = "\n".join([l for l in info.split("\n") if l[0:3] != "d: "])
-    if len(references) == 0:
         info = "\n".join([l for l in info.split("\n") if l[0:3].lower() != "s: "])
+    if len(references) == 0:
+        info = "\n".join([l for l in info.split("\n") if l[0:3] != "d: "])
     # Put all of the pre-images and post-images into the same space.  Currently only supported for graphs.
     if graph is not None and isinstance(nodes_movable[0], str):
         nodes_movable_img = tuple(graph.get_image(n) if n == nodes_movable[0] else graph.get_transform(n, nodes_movable[0]).transform_image(graph.get_image(n), output_size=graph.get_image(nodes_movable[0]).shape, force_size=True) for n in nodes_movable)
@@ -508,7 +509,7 @@ q: quit
         elif resp[0] == "e":
             t = alignment_gui(nodes_movable, nodes_fixed, transform=t, references=refs, graph=graph) 
         elif resp[0] in "cx" and len(resp) > 1 and resp[1] in _POINT_BASED.keys():
-            if isinstance(t, tuple(_POINT_BASED.values())):
+            if isinstance(t, PointTransform):
                 if resp[0] == "x":
                     t = _refine_transform(t, _TRANSFORMS_FOR_INTERACTIVE[resp[1]])
                 elif resp[0] == "c":

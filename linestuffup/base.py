@@ -145,8 +145,8 @@ class Transform:
         if output_size is None: # the default
             pass
         elif isinstance(output_size, (list,tuple,np.ndarray)): # Manually specifying coordinates
-            maxpos_ = np.asarray([r[1] if isinstance(r, tuple) else r if r is not None else np.inf for r in output_size], dtype="float32")
-            origin_ = np.asarray([r[0] if isinstance(r, tuple) else 0 if r is not None else -np.inf for r in output_size], dtype="float32")
+            maxpos_ = np.asarray([r[1] if isinstance(r, (list,tuple,np.ndarray)) else r if r is not None else np.inf for r in output_size], dtype="float32")
+            origin_ = np.asarray([r[0] if isinstance(r, (list,tuple,np.ndarray)) else 0 if r is not None else -np.inf for r in output_size], dtype="float32")
             if force_size:
                 origin = origin_
                 maxpos = maxpos_
@@ -560,9 +560,11 @@ class Identity(AffineTransform,Transform):
         return points
     def invert(self):
         return self.__class__()
-    def transform_image(self, image, output_size=None, labels=None, force_size=None):
+    def transform_image(self, image, output_size=None, labels=None, force_size=True):
         """More efficient implementation of image transformation"""
         # TODO This doesn't work for different output_size values
+        if output_size is not None:
+            return super().transform_image(image, output_size=output_size, labels=labels, force_size=force_size)
         return image
 
 class Rescale(AffineTransform,Transform):

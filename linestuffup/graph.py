@@ -51,6 +51,11 @@ class Graph:
         if isinstance(name, slice) and isinstance(name.start, str) and isinstance(name.stop, str) and name.step is None:
             return self.add_edge(name.start, name.stop, value)
         raise ValueError(f"A graph cannot assign the item '{item}'")
+    def __delitem__(self, name):
+        if isinstance(name, str):
+            return self.remove_node(name)
+        if isinstance(name, slice) and isinstance(name.start, str) and isinstance(name.stop, str) and name.step is None:
+            return self.remove_edge(name.start, name.stop)
         
     def __contains__(self, item):
         if isinstance(item, str):
@@ -60,8 +65,8 @@ class Graph:
         raise ValueError(f"A graph cannot contain the item '{item}'")
 
     def save(self, filename=None):
-        assert not os.path.isfile(filename), "Save path already exists"
-        if filename and self.filename:
+        assert filename is None or not os.path.isfile(filename), "Save path already exists"
+        if filename and self.filename and os.path.isfile(self.filename):
             shutil.copy(self.filename, filename)
         if not filename:
             filename = self.filename
