@@ -1,34 +1,37 @@
 # LineStuffUp
 
+LineStuffUp makes it easy to align 3D images/volumes.
+
+# Installation
+
 To install, you need the following packages:
 
 > pip install numpy scipy napari magicgui vispy scikit-image imageio imageio-ffmpeg
 
 # Conceptual summary
 
-This library is used for aligning 3D images/volumes.
+There are three main components:
 
-There are three main components to this library:
-
-1. *Transforms*.  A transform allows you to get from an input space to a target
+1. **Transforms**.  A transform allows you to get from an input space to a target
    space through affine or nonlinear transforms.  It allows you to pass points
    or images from the input space to the target space.  For instance, a rotation
    matrix with a shift is an example of a Transform.  There are many included by
    default, but you can also create your own.  Transforms can be composed and
    edited.  Transforms are the foundation of this library.
-2. *GUIs to create Transforms*.  It can be difficult to find the correct
+2. **GUIs to create Transforms**.  It can be difficult to find the correct
    parameters for a transform, so multiple GUIs can assist you.  The simplest
-   one allows you to pass two volumes and a Transform, and then interactively
-   use that Transform to align the volumes.  A more advanced one allows you to
-   align in steps by composing different Transforms together.
-3. *Grphs to manage networks of Transforms*.  In many practical applications,
+   one ((``alignment_gui()``)) allows you to pass two volumes and a Transform,
+   and then interactively use that Transform to align the volumes.  A more
+   advanced one (``align_interactive()``) allows you to align in steps by
+   composing different Transforms together.
+3. **Graphs to manage networks of Transforms**.  In many practical applications,
    you may need to align many different images to the same target image, or
    other complex relationships between images.  It can quickly become unwieldly
    to organise all of these Transforms and their corresponding images.  Graphs
    make it easy to keep everything organised.  Several convenience methods are
    included for aligning within a graph.
 
-This library always uses (z,y,x) coordinate format.  Likewise, images are
+LineStuffUp always uses (z,y,x) coordinate format.  Likewise, images are
 expected to have the z position as its first coordinate, y as its second, and x
 as its third.  The point (5,6,7) on an image ``im`` will be at the voxel
 ``im[5,6,7]``.  Note that when displaying images, as is the convention in
@@ -37,7 +40,7 @@ indicate closer to the bottom of the screen.  This format is compatible with
 nearly all other Python image libraries, and so usually you should not need to
 think about this.
 
-This library also uses an extension on numpy ndarrays to specify a coordinate
+LineStuffUp also uses an extension on numpy ndarrays to specify a coordinate
 system origin.  These objects are called "ndarray_shifted".  If you do not care
 about the shift, you can use them like a normal numpy array.
 
@@ -49,8 +52,8 @@ target is the "base".  For instance, suppose you have a volumetric image , and a
 second volumetric image rescaled to have uniform voxel size of 1um.  A Transform
 could map points or images between the raw and rescaled coordinate spaces.
 
-There are many types of Transforms included by default in this library.  These
-fall into two main categories:
+There are many types of Transforms included by default.  These fall into two
+main categories:
 
 - *Parameter-based Transforms* use parametric values to define the Transform.
   For instance, TranslationFixed is a parameter-based Transform that receives an
@@ -63,16 +66,10 @@ fall into two main categories:
   smoothness hyperparameter or a normal vector along which the Transform should
   occur.
 
-Transforms are invertible.  You can use the ``.invert()`` function to perform
-the inversion.  This occurs analytically for most Transforms, but for some
-non-rigid Transforms (e.g. ``DistanceWeightedAverage``), the inverse Transform
-will be much (1000x or more) slower than the forward Transform.  These are
-referred to as non-invertable, because the inverse is computed numerically.  It
-is best to avoid non-invertable transforms if possible - since points must use a
-forward transform and images must use an inverse transform, they can be
-extremely slow for most types of data.
+**Transforms are invertible.**  You can use the ``.invert()`` function to perform
+the inversion.  This occurs analytically for most Transforms.
 
-Transforms may be specified or unspecified.  A specified Transform includes
+**Transforms may be specified or unspecified.**  A specified Transform includes
 values for each of its parameters, and matching point clouds if it is a
 Point-based Transform.  This is represented by an instance of the class.  An
 unspecified Transform does not yet have chosen parameters or points, and is
@@ -83,7 +80,7 @@ because you have not yet defined what the transform should do.  Unspecified
 transforms can be made specified through the GUI, or by calling them with the
 appropriate parameters.
 
-Transforms are composable.  If you have two Transforms, you can add them
+**Transforms are composable.**  If you have two Transforms, you can add them
 together to get their composition.  For instance, the Transform that first
 applies Transform A and then applied Transform B can be written in Python as
 `A + B`. Two specified Transforms may be composed, and their composition gives
@@ -92,17 +89,18 @@ composed, but their composition gives an unspecified transform.  Currently, the
 unspecified Transform must be the final term in the sum.  Two unspecified
 Transforms cannot be composed.
 
-Transforms are lossless.  If you compose ``Rescale(x=.5, y=.5, z=.5) +
+**Transforms are lossless.**  If you compose ``Rescale(x=.5, y=.5, z=.5) +
 Rescale(x=2, y=2, z=2)`` and apply it to an image, the result will be identical
 to your starting image, without the artifacts from resizing the image.  More
 generally, under the hood, a long chain of composed transforms will all be
 applied at once.
 
-All the information needed to save a Transform comes from its text
-representation.  So, you can simply call "print" and then copy and paste it
+**All the information needed to save a Transform comes from its text
+representation.**  So, you can simply call "print" and then copy and paste it
 somewhere, or save the text of the Transform to a text file.  The string
 representation is executable Python code that you can run to recreate your
-Transform.
+Transform.  Nevertheless, there is also a ``Transform.save()`` function which
+does this for you.
 
 ## List of Transforms
 
@@ -122,6 +120,9 @@ Input images can be approximately one of three types:
 Transforms may be affine (linear) or non-linear.  Affine Transforms, under the
 hood, use the equation ``points @ self.matrix + self.shift`` to transform
 points.
+
+While creating your own Transform is easy, the following Transforms are included
+by default:
 
 | Name                          | Description                                                                       | Cake | Pancake | Rice paper | Point-based | Invertable | Affine |
 |-------------------------------|-----------------------------------------------------------------------------------|------|---------|------------|-------------|------------|--------|
@@ -305,11 +306,11 @@ To visualise the structure of the graph, run ``g.visualise()``.  For extremely
 large graphs, you can use the "nearby" argument to specify a node, and the
 visualisation will only include nodes directly connected to the given node.
 
-Optionally, a Graph may also contain the raw images themselves.  This
-is accomplished by passing the "image" argument to ``g.add_node``.  The images
-will be aggressively compressed with minimal loss in quality through the use of
-video codecs, with compression rates on high-resolution microscopy images often
-approaching 100:1.
+Often, a Graph may also contain the raw images themselves.  This is accomplished
+by passing the "image" argument to ``g.add_node``.  The images will be
+aggressively compressed with minimal loss in quality through the use of video
+codecs, with compression rates on high-resolution microscopy images often
+approaching 100:1 or higher.
 
 When images are included directly, several convenience methods can be used.
 Most notably, the ``GraphViewer`` is a napari viewer that accepts node names as
