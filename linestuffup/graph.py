@@ -44,7 +44,7 @@ class Graph:
             return self.get_image(item)
         if isinstance(item, slice) and isinstance(item.start, str) and isinstance(item.stop, str) and item.step is None and item.start in self.nodes and item.stop in self.nodes:
             return self.get_transform(item.start, item.stop)
-        raise ValueError(f"A graph cannot have the item '{item}'")
+        raise ValueError(f"Graph does not have the node '{item}'")
     def __setitem__(self, name, value):
         if isinstance(name, str):
             return self.add_node(name, image=value)
@@ -371,6 +371,12 @@ class Graph:
             to_append = [tuple(list(c0)+[n]) for n in self.edges[c0[-1]] if n not in seen]
             candidates.extend(to_append)
         raise RuntimeError(f"Path from '{frm}' to '{to}' not found")
+    def has_transform(self, frm, to):
+        try:
+            self.get_transform(frm, to)
+        except RuntimeError:
+            return False
+        return True
     def get_image(self, node):
         if node not in self.nodes:
             raise KeyError(f"Node '{node}' does not exist.")
