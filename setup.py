@@ -22,7 +22,7 @@ setup(
     python_requires='>=3.7',
     url='https://github.com/mwshinn/LineStuffUp',
     packages = ['linestuffup'],
-    install_requires = ["numpy", "scipy", "napari", "magicgui", "scikit-image", "imageio", "imageio-ffmpeg"],
+    install_requires = ["numpy", "scipy", "napari", "magicgui", "scikit-image", "imageio", "imageio-ffmpeg", "threadpoolctl"],
     classifiers = [
         "Topic :: Scientific/Engineering",
         "Topic :: Scientific/Engineering :: Bio-Informatics",

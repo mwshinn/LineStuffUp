@@ -138,6 +138,20 @@ def alignment_gui(movable_image, base_image, transform=None, graph=None, referen
         layer_movable_points.data = movable_points
         layer_base_points.editable = False
         layer_movable_points.editable = False
+    # Disable the transform button in napari, because this doesn't actually work in napari and is just confusing
+    for l in v.layers:
+        try:
+            v._window._qt_viewer._controls.widgets[l]._MODE_BUTTONS['transform'].hide()
+        except:
+            pass
+    # Disable other buttons that might mess things up
+    try:
+        v._window._qt_viewer._layersButtons.deleteButton.hide()
+        v._window._qt_viewer._layersButtons.newLabelsButton.hide()
+        v._window._qt_viewer._layersButtons.newPointsButton.hide()
+        v._window._qt_viewer._layersButtons.newShapesButton.hide()
+    except:
+        pass
     def select_base_movable():
         # The logic to get this to work is out of order, so please read code in the
         # order specified in the comments.
@@ -355,7 +369,7 @@ def alignment_gui(movable_image, base_image, transform=None, graph=None, referen
         initial_pos = [w.value if w is not None else 0 for w in _MOUSE_DRAG_WIDGETS]
         dd = event.dims_displayed
         base = event.position
-        wh = event.source.size
+        #wh = event.source.size
         yield
         while event.type == "mouse_move":
             if _MOUSE_DRAG_WIDGETS[dd[0]] is not None:
