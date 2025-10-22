@@ -345,8 +345,21 @@ class Graph:
             node for node, image in self.node_images.items()
             if isinstance(image, np.ndarray) and node not in self.compressed_node_images
         ]
-        for node_name in nodes_to_unload:
-            self.node_images[node_name] = None
+        if not nodes_to_unload:
+            return
+        # Re-fetch the correct placeholders from the database.
+        con = sqlite3.connect(f'file:{self.filename}?mode=ro', uri=True)
+        cur = con.cursor()
+        try:
+            placeholders = ','.join('?' * len(nodes_to_unload))
+            cur.execute(f"SELECT node_name, ref_node FROM node_images WHERE node_name IN ({placeholders})", nodes_to_unload)
+            for node_name, ref_node in cur.fetchall():
+                if ref_node is not None:
+                    self.node_images[node_name] = f"ref:{ref_node}"
+                else:
+                    self.node_images[node_name] = None
+        finally:
+            con.close()
     
     def get_transform(self, frm, to):
         assert frm in self.nodes, f"Node {frm} not found"
